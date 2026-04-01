@@ -1,56 +1,52 @@
-# garrison
+# tulip
 
-Run multiple Claude Code workers in parallel, each on its own git worktree.
+Run multiple Claude Code sessions in parallel on a single repo, each isolated in its own git worktree.
 
-- Workers survive restarts.
-- You can commit and push without leaving the TUI.
-- Everything is managed from a single tmux session.
+- Sessions survive terminal restarts and are automatically resumed.
+- Jump into any project's shell, preview live changes, or commit and push from a single command.
 
 ## Requirements
 
-- [uv](https://github.com/astral-sh/uv)
 - tmux
-- [Claude CLI](https://claude.ai/code)
+- [Claude Code](https://claude.ai/code)
 
 ## Install
 
 ```bash
-uv tool install git+https://github.com/dgzlopes/garrison
+curl -fsSL https://raw.githubusercontent.com/dgzlopes/tulip/main/install.sh | bash
 ```
 
 ## Usage
 
 ```bash
-garrison          # start or reattach
-garrison reset    # wipe state, kill the session and remove all worktrees
+tulip          # open the TUI
+tulip reset    # wipe all projects, sessions, and worktrees
 ```
 
-## Keys
-
-**General**
+## TUI keys
 
 | Key | Action |
 |-----|--------|
-| `n` | New worker |
+| `n` | New project |
+| `d` | Delete selected project and worktree |
 | `q` | Quit |
 
-**On selected worker**
+## Project commands
 
-| Key | Action |
-|-----|--------|
-| `f` | Delete worker and worktree |
-| `s`     | Commit all changes and push |
-| `t`     | Open a terminal in the worktree |
-| `w`     | Run `yarn run watch` in the worktree |
-| `c`     | Open worktree in your current VS Code workplace |
+Once you have projects running, interact with them from any terminal:
 
-## Copying text (macOS)
-
-Hold `Option` while dragging to select text, then `Cmd+C` to copy. tmux captures mouse events by default so the `Option` key is needed to bypass it.
+```bash
+tulip <project>              # interactive picker (arrow keys)
+tulip claude <project>       # attach to the Claude session
+tulip shell <project>        # open a shell in the worktree
+tulip graft <project>        # yarn install + watch (for Graft live preview)
+tulip vscode <project>       # open the worktree in VS Code
+tulip publish <project> <msg># stage all, commit (signed), and push
+```
 
 ## Contributing
 
-It's a personal tool so feel free to fork it and make it your own.
+Personal tool — fork and adapt freely.
 
 ## License
 
