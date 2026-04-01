@@ -167,6 +167,9 @@ func gitEnsureExclude(repoRoot string) {
 	if !strings.Contains(content, ".claude/") {
 		additions = append(additions, ".claude/")
 	}
+	if !strings.Contains(content, "dist") {
+		additions = append(additions, "dist")
+	}
 	if len(additions) == 0 {
 		return
 	}
@@ -200,6 +203,7 @@ func graftSymlinkDist(repoRoot, worktree string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
+	gitEnsureExclude(repoRoot)
 	return os.Symlink(src, dst)
 }
 

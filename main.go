@@ -471,7 +471,7 @@ func cmdReset() error {
 		return nil
 	}
 
-	fmt.Printf("This will delete %d branch(es), kill their sessions, and remove their worktrees.\n", len(s.Workers))
+	fmt.Printf("This will kill %d session(s) and remove their worktrees. Branches are kept.\n", len(s.Workers))
 	fmt.Print("Reset everything? [y/N] ")
 
 	reader := bufio.NewReader(os.Stdin)

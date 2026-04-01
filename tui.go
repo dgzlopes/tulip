@@ -54,6 +54,7 @@ const (
 	modeBranchExists    // confirm start from existing branch
 	modePick            // action picker for selected project
 	modePublish         // commit message input before publishing
+	modeTerminalWarning // confirm before taking over the terminal
 )
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -94,8 +95,9 @@ type model struct {
 	pickedWorker  *Worker
 	pickedAction  int // -1 = none
 	spinner        spinner.Model
-	grafting       bool
-	publishBranch  string
+	grafting        bool
+	publishBranch   string
+	terminalAction  int // pickCursor value pending terminal-warning confirmation
 }
 
 func newModel(s *State, repoRoot string) model {
@@ -200,8 +202,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case workerCreatedMsg:
 
 	case workerDeletedMsg:
-		text := "deleted " + msg.branch
-		m.notif = "✓  " + text
+		text := "🗑️  deleted " + msg.branch
+		m.notif = text
 		m.notifIsErr = false
 		m.notifTick = 4
 		(&m).addLog(sGreen.Render("✓") + "  " + text)
@@ -270,6 +272,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateBranchExists(msg)
 		case modePick:
 			return m.updatePick(msg)
+		case modeTerminalWarning:
+			return m.updateTerminalWarning(msg)
 		case modePublish:
 			return m.updatePublish(msg)
 		}
@@ -664,9 +668,10 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		branch := m.pickedWorker.Branch
 		switch m.pickCursor {
-		case 0, 1: // claude, shell — take over terminal
-			m.pickedAction = m.pickCursor
-			return m, tea.Quit
+		case 0, 1: // claude, shell — warn before taking over terminal
+			m.terminalAction = m.pickCursor
+			m.mode = modeTerminalWarning
+			return m, nil
 		case 3: // graft-debug — only quit if the watch window exists
 			wk := m.pickedWorker
 			if !tmuxHasWindow(wk.Session, "watch/"+branch) {
@@ -677,8 +682,9 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.notifTick = 6
 				return m, nil
 			}
-			m.pickedAction = m.pickCursor
-			return m, tea.Quit
+			m.terminalAction = m.pickCursor
+			m.mode = modeTerminalWarning
+			return m, nil
 		case 2: // graft — run inline
 			m.mode = modeNormal
 			m.pickedWorker = nil
@@ -702,6 +708,53 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// terminalActionCmd maps a terminalAction index to its CLI sub-command name.
+func terminalActionCmd(action int) string {
+	switch action {
+	case 0:
+		return "claude"
+	case 1:
+		return "shell"
+	case 3:
+		return "graft-debug"
+	}
+	return ""
+}
+
+func (m model) updateTerminalWarning(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch k.String() {
+	case "esc", "q":
+		m.mode = modePick
+	case "enter", "y":
+		m.pickedAction = m.terminalAction
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m model) viewTerminalWarning() string {
+	if m.pickedWorker == nil {
+		return ""
+	}
+	branch := m.pickedWorker.Branch
+	cmd := terminalActionCmd(m.terminalAction)
+	sep := "  " + sDim.Render("·") + "  "
+	var lines []string
+	lines = append(lines, m.pageHeader())
+	lines = append(lines, "")
+	lines = append(lines, sHeader.Render("  "+branch))
+	lines = append(lines, "")
+	lines = append(lines, "  ⚠️  "+sBold.Render("tulip "+cmd+" "+branch)+" "+sDim.Render("will take over this terminal."))
+	lines = append(lines, "")
+	lines = append(lines, "  "+sDim.Render("To keep the TUI open, run that command in a separate terminal instead."))
+	lines = append(lines, "")
+	lines = append(lines, "  "+
+		sKey.Render("enter")+" "+sDim.Render("take over this terminal")+
+		sep+
+		sKey.Render("esc")+" "+sDim.Render("back"))
+	return strings.Join(lines, "\n")
 }
 
 func (m *model) graftCmd(branch string) tea.Cmd {
@@ -847,6 +900,8 @@ func (m model) View() string {
 		return m.modalBranchExists()
 	case modePick:
 		return m.viewPick()
+	case modeTerminalWarning:
+		return m.viewTerminalWarning()
 	case modePublish:
 		return m.modalPublish()
 	}
