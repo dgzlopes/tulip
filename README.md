@@ -1,6 +1,6 @@
 # garrison
 
-Run multiple Claude workers in parallel, each on its own git worktree.
+Run multiple Claude Code workers in parallel, each on its own git worktree.
 
 - Workers survive restarts.
 - You can commit and push without leaving the TUI.
