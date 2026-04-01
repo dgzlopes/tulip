@@ -402,8 +402,16 @@ func cmdWatch(branch string) error {
 		}
 	}
 	winName := "watch/" + branch
-	if err := tmuxNewWindow(target.Session, winName, target.Worktree, "yarn install && yarn run watch"); err != nil {
+	if err := tmuxNewWindow(target.Session, winName, target.Worktree, ""); err != nil {
 		return fmt.Errorf("could not start graft for %q: %w", branch, err)
+	}
+	tmuxSetWindowOption(target.Session, winName, "remain-on-exit", "on")
+	if err := graftSymlinkDist(repoRoot, target.Worktree); err != nil {
+		tmuxKillWindow(target.Session, winName)
+		return fmt.Errorf("could not symlink dist: %w", err)
+	}
+	if err := tmuxSendKeys(target.Session+":"+winName, "yarn install && yarn run watch"); err != nil {
+		return fmt.Errorf("could not send graft command: %w", err)
 	}
 	fmt.Printf("grafting %s\n", branch)
 	return nil

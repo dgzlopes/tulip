@@ -180,6 +180,26 @@ func gitEnsureExclude(repoRoot string) {
 	_ = os.WriteFile(excludePath, []byte(content), 0o644)
 }
 
+// graftSymlinkDist replaces <repoRoot>/dist with a symlink pointing at <worktree>/dist,
+// so Graft always serves the active worktree's build output.
+// If dist exists and is a real directory (not a symlink), it refuses to touch it.
+func graftSymlinkDist(repoRoot, worktree string) error {
+	dst := filepath.Join(repoRoot, "dist")
+	src := filepath.Join(worktree, "dist")
+	fi, err := os.Lstat(dst)
+	if err == nil {
+		if fi.Mode()&os.ModeSymlink == 0 {
+			return fmt.Errorf("%s exists and is not a symlink — move or delete it manually first", dst)
+		}
+		if err := os.Remove(dst); err != nil {
+			return fmt.Errorf("could not remove existing symlink: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(src, dst)
+}
+
 // gitStageAndCommit stages all changes in the worktree and creates a signed commit with the given message.
 func gitStageAndCommit(worktree, message string) error {
 	addCmd := exec.Command("git", "add", "-A")

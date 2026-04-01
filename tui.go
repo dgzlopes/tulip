@@ -705,7 +705,7 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) graftCmd(branch string) tea.Cmd {
-	state := m.state
+	state, repoRoot := m.state, m.repoRoot
 	return func() tea.Msg {
 		var target *Worker
 		for i := range state.Workers {
@@ -731,6 +731,9 @@ func (m *model) graftCmd(branch string) tea.Cmd {
 			return graftDoneMsg{branch: branch, err: fmt.Errorf("could not start graft: %w", err)}
 		}
 		tmuxSetWindowOption(target.Session, winName, "remain-on-exit", "on")
+		if err := graftSymlinkDist(repoRoot, target.Worktree); err != nil {
+			return graftDoneMsg{branch: branch, err: fmt.Errorf("could not symlink dist: %w", err)}
+		}
 		if err := tmuxSendKeys(target.Session+":"+winName, "yarn install && yarn run watch"); err != nil {
 			return graftDoneMsg{branch: branch, err: fmt.Errorf("could not send graft command: %w", err)}
 		}
