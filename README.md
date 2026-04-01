@@ -2,7 +2,9 @@
 
 Run multiple Claude workers in parallel, each on its own git worktree.
 
-Workers survive restarts, you can commit and push without leaving the TUI, and everything is managed from a single tmux session.
+- Workers survive restarts.
+- You can commit and push without leaving the TUI.
+- Everything is managed from a single tmux session.
 
 ## Setup
 
