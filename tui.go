@@ -732,6 +732,7 @@ func (m *model) graftCmd(branch string) tea.Cmd {
 		}
 		tmuxSetWindowOption(target.Session, winName, "remain-on-exit", "on")
 		if err := graftSymlinkDist(repoRoot, target.Worktree); err != nil {
+			tmuxKillWindow(target.Session, winName)
 			return graftDoneMsg{branch: branch, err: fmt.Errorf("could not symlink dist: %w", err)}
 		}
 		if err := tmuxSendKeys(target.Session+":"+winName, "yarn install && yarn run watch"); err != nil {

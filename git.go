@@ -189,10 +189,13 @@ func graftSymlinkDist(repoRoot, worktree string) error {
 	fi, err := os.Lstat(dst)
 	if err == nil {
 		if fi.Mode()&os.ModeSymlink == 0 {
-			return fmt.Errorf("%s exists and is not a symlink — move or delete it manually first", dst)
-		}
-		if err := os.Remove(dst); err != nil {
-			return fmt.Errorf("could not remove existing symlink: %w", err)
+			if err := os.RemoveAll(dst); err != nil {
+				return fmt.Errorf("could not remove %s: %w", dst, err)
+			}
+		} else {
+			if err := os.Remove(dst); err != nil {
+				return fmt.Errorf("could not remove existing symlink: %w", err)
+			}
 		}
 	} else if !os.IsNotExist(err) {
 		return err
