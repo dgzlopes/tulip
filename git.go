@@ -43,6 +43,13 @@ func gitBranchExistsLocally(repoRoot, branch string) bool {
 	return cmd.Run() == nil
 }
 
+// BranchExistsError is returned when trying to create a new branch that already exists locally.
+type BranchExistsError struct{ Branch string }
+
+func (e BranchExistsError) Error() string {
+	return fmt.Sprintf("branch %q already exists", e.Branch)
+}
+
 // StaleWorktreeError is returned when a branch is "already checked out" at a
 // path that no longer exists on disk — the worktree entry is stale.
 type StaleWorktreeError struct{ Branch string }
@@ -99,6 +106,7 @@ func gitCreateWorktree(repoRoot, branch, worktreePath string) error {
 }
 
 // gitPruneWorktrees removes stale worktree administrative files.
+
 func gitPruneWorktrees(repoRoot string) error {
 	cmd := exec.Command("git", "worktree", "prune")
 	cmd.Dir = repoRoot
@@ -121,6 +129,9 @@ func gitCreateWorktreeFromBase(repoRoot, branch, worktreePath, baseBranch string
 				return StaleWorktreeError{Branch: branch}
 			}
 			return fmt.Errorf("branch %q is already checked out in another worktree", branch)
+		}
+		if bytes.Contains(out, []byte("already exists")) {
+			return BranchExistsError{Branch: branch}
 		}
 		return fmt.Errorf("git worktree add failed: %s", strings.TrimSpace(string(out)))
 	}

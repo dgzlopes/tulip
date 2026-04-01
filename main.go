@@ -20,7 +20,8 @@ Usage:
   tulip                     launch TUI
   tulip claude <branch>     attach to the Claude session (restart if needed)
   tulip shell <branch>      open an empty terminal in the worktree
-  tulip graft <branch>      yarn install + watch (for Graft live preview)
+  tulip graft <branch>      switch active Graft preview to this branch
+  tulip graft-debug <branch> attach to the Graft watch output
   tulip publish <branch>    stage all, commit (signed), and push
   tulip vscode <branch>     open the worktree in VS Code
   tulip reset               wipe all projects
@@ -30,6 +31,13 @@ Options:
 `
 
 func main() {
+	// Initialise the dedicated tmux socket as early as possible so all tmux
+	// helpers use the isolated server for this repo. Best-effort — if the repo
+	// root can't be found (e.g. -h/--version flags) we just leave it empty.
+	if root, err := findRepoRoot(); err == nil {
+		initTmuxSocket(filepath.Join(root, ".tulip"))
+	}
+
 	args := os.Args[1:]
 
 	if len(args) == 0 {
@@ -77,6 +85,16 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "graft-debug":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: tulip graft-debug <branch>")
+			os.Exit(1)
+		}
+		if err := cmdGraftDebug(args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "publish":
 		if len(args) < 3 {
 			fmt.Fprintln(os.Stderr, "usage: tulip publish <branch> <message>")
@@ -118,7 +136,8 @@ var pickActions = []struct {
 }{
 	{"claude", "attach to Claude session"},
 	{"shell", "open a terminal in the worktree"},
-	{"graft", "yarn install + watch (Graft live preview)"},
+	{"graft", "switch Graft preview to this branch"},
+	{"graft-debug", "view Graft watch output"},
 	{"vscode", "open in VS Code"},
 	{"publish", "stage, commit, and push"},
 }
@@ -250,8 +269,10 @@ func cmdTUI() error {
 	case 2:
 		return cmdWatch(branch)
 	case 3:
-		return cmdVSCode(branch)
+		return cmdGraftDebug(branch)
 	case 4:
+		return cmdVSCode(branch)
+	case 5:
 		fmt.Print("commit message: ")
 		reader := bufio.NewReader(os.Stdin)
 		msg, _ := reader.ReadString('\n')
@@ -315,7 +336,8 @@ func tmuxAttach(target string) error {
 		return fmt.Errorf("tmux not found: %w", err)
 	}
 	fmt.Print("\033[H\033[2J\033[3J")
-	return syscall.Exec(tmuxBin, []string{"tmux", "attach-session", "-t", target}, os.Environ())
+	argv := append([]string{"tmux"}, tmuxArgs([]string{"attach-session", "-t", target})...)
+	return syscall.Exec(tmuxBin, argv, os.Environ())
 }
 
 // cmdOpen attaches to (or restarts) the Claude session for the given branch.
@@ -346,15 +368,56 @@ func cmdShell(branch string) error {
 	return cmd.Run()
 }
 
-// cmdWatch runs yarn install then yarn watch in the worktree (for Graft live preview).
+// cmdWatch switches the active Graft preview to the given branch.
+// Any existing watch window (across all workers) is killed first.
 func cmdWatch(branch string) error {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		return err
+	}
+	s, err := loadState(repoRoot)
+	if err != nil {
+		return err
+	}
+	// Validate the target before touching anything.
+	var target *Worker
+	for i := range s.Workers {
+		if s.Workers[i].Branch == branch {
+			target = &s.Workers[i]
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("no project found for %q", branch)
+	}
+	if !tmuxHasSession(target.Session) {
+		return fmt.Errorf("%q is not running — start it first with: tulip claude %s", branch, branch)
+	}
+	// Kill any existing watch window across all workers.
+	for _, w := range s.Workers {
+		winName := "watch/" + w.Branch
+		if tmuxHasWindow(w.Session, winName) {
+			fmt.Printf("stopped grafting %s\n", w.Branch)
+			tmuxKillWindow(w.Session, winName)
+		}
+	}
+	winName := "watch/" + branch
+	if err := tmuxNewWindow(target.Session, winName, target.Worktree, "yarn install && yarn run watch"); err != nil {
+		return fmt.Errorf("could not start graft for %q: %w", branch, err)
+	}
+	fmt.Printf("grafting %s\n", branch)
+	return nil
+}
+
+// cmdGraftDebug attaches to the active watch window for the given branch.
+func cmdGraftDebug(branch string) error {
 	_, w, err := requireWorker(branch)
 	if err != nil {
 		return err
 	}
 	winName := "watch/" + branch
-	if err := tmuxNewWindow(w.Session, winName, w.Worktree, "yarn install && yarn run watch"); err != nil {
-		return fmt.Errorf("create watch window: %w", err)
+	if !tmuxHasWindow(w.Session, winName) {
+		return fmt.Errorf("%q is not currently being grafted", branch)
 	}
 	return tmuxAttach(w.Session + ":" + winName)
 }

@@ -17,6 +17,7 @@ type Worker struct {
 	Worktree       string `json:"worktree"`
 	Session        string `json:"session"`
 	Status         string `json:"status"`
+	Grafting       bool   `json:"grafting,omitempty"`
 	CreatedAt      string `json:"created_at"`
 	SessionStarted bool   `json:"session_started"`
 }
