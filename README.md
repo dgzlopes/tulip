@@ -1,3 +1,6 @@
+
+<img width="81" height="134" alt="tulip" src="https://github.com/user-attachments/assets/514b0852-fb82-49b5-a352-3050d060d72e" /> 
+
 # tulip
 
 Run multiple Claude Code sessions in parallel on a single repo, each isolated in its own git worktree.
