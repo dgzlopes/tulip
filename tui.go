@@ -178,12 +178,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				code := tmuxWindowExitStatus(w.Session, winName)
 				tmuxKillWindow(w.Session, winName)
 				if code != 0 {
-					if w.GraftStatus != "crashed" {
-						w.GraftStatus = "crashed"
-						tmuxSetGraftStatus(w.Session, "crashed")
+					if w.GraftStatus != "failed" {
+						w.GraftStatus = "failed"
+						tmuxSetGraftStatus(w.Session, "failed")
 						changed = true
 					}
-					m.notif = fmt.Sprintf("✗  graft crashed (exit %d) on %s", code, w.Branch)
+					m.notif = fmt.Sprintf("✗  graft failed (exit %d) on %s", code, w.Branch)
 					m.notifIsErr = true
 					m.notifTick = 8
 				} else if w.GraftStatus != "" {
@@ -706,6 +706,13 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case 2: // graft — run inline
 			m.mode = modeNormal
+			for i := range m.state.Workers {
+				if m.state.Workers[i].Branch == branch {
+					m.state.Workers[i].GraftStatus = "loading"
+					tmuxSetGraftStatus(m.state.Workers[i].Session, "loading")
+					break
+				}
+			}
 			m.pickedWorker = nil
 			m.grafting = true
 			return m, tea.Batch(m.graftCmd(branch), m.spinner.Tick)
@@ -947,10 +954,12 @@ func (m model) viewMain() string {
 			num := sDim.Render(fmt.Sprintf("%d", wk.ID))
 			row := num + "  " + dot + " " + branch
 			switch wk.GraftStatus {
+			case "loading":
+				row += "  " + sDim.Render("graft: loading")
 			case "active":
-				row += "  " + sCyan.Render("⌁ grafting")
-			case "crashed":
-				row += "  " + sRed.Render("⌁ crashed")
+				row += "  " + sGreen.Render("graft: active")
+			case "failed":
+				row += "  " + sRed.Render("graft: failed")
 			}
 			if i == m.cursor {
 				lines = append(lines, "  "+sCyan.Render("▶")+" "+row)
@@ -1002,8 +1011,9 @@ func (m model) viewHelp() string {
 	lines = append(lines, "")
 	lines = append(lines, "  "+sBold.Render("graft status"))
 	lines = append(lines, "")
-	lines = append(lines, "  "+sCyan.Render("⌁ grafting")+"   "+sDim.Render("graft watch is running"))
-	lines = append(lines, "  "+sRed.Render("⌁ graft crashed")+"  "+sDim.Render("graft watch exited unexpectedly"))
+	lines = append(lines, "  "+sDim.Render("graft: loading")+"  "+sDim.Render("graft is starting up"))
+	lines = append(lines, "  "+sGreen.Render("graft: active")+"   "+sDim.Render("graft watch is running"))
+	lines = append(lines, "  "+sRed.Render("graft: failed")+"   "+sDim.Render("graft watch exited unexpectedly"))
 	lines = append(lines, "")
 	lines = append(lines, "  "+sKey.Render("esc")+" "+sDim.Render("to go back"))
 	return strings.Join(lines, "\n")

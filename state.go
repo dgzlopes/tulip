@@ -17,7 +17,7 @@ type Worker struct {
 	Worktree       string `json:"worktree"`
 	Session        string `json:"session"`
 	Status         string `json:"status"`
-	GraftStatus    string `json:"graft_status,omitempty"` // "", "active", "crashed"
+	GraftStatus    string `json:"graft_status,omitempty"` // "", "loading", "active", "failed"
 	CreatedAt      string `json:"created_at"`
 	SessionStarted bool   `json:"session_started"`
 }

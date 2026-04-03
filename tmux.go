@@ -45,7 +45,7 @@ func tmuxNewSession(name, branch, startDir string) error {
 	_ = tmuxRun("set-option", "-t", name, "@branch", branch)
 	_ = tmuxRun("set-option", "-g", "status", "on")
 	_ = tmuxRun("set-option", "-g", "status-style", "bg=colour235,fg=colour245")
-	_ = tmuxRun("set-option", "-g", "status-left", "#[fg=colour6,bold] #{s|watch/.*|Graft Debug|:#{s|shell/.*|Shell|:#{s|claude|Claude Code|:#{window_name}}}} #[nobold,fg=colour8]— #[fg=colour245]#{@branch}#{?#{==:#{@grafting},active},#[fg=colour6]  ⌁ grafting,#{?#{==:#{@grafting},crashed},#[fg=colour1]  ⌁ graft crashed,}}  #[bg=colour240,fg=colour255] #{?#{==:#{@copy_done},1},✓ copied,#{?pane_in_mode,select the text you want to copy,copy}} ")
+	_ = tmuxRun("set-option", "-g", "status-left", "#[fg=colour6,bold] #{s|watch/.*|Graft Debug|:#{s|shell/.*|Shell|:#{s|claude|Claude Code|:#{window_name}}}} #[nobold,fg=colour8]— #[fg=colour245]#{@branch}#{?#{==:#{@grafting},loading},#[fg=colour8]  graft: loading,#{?#{==:#{@grafting},active},#[fg=colour2]  graft: active,#{?#{==:#{@grafting},failed},#[fg=colour1]  graft: failed,}}}  #[bg=colour240,fg=colour255] #{?#{==:#{@copy_done},1},✓ copied,#{?pane_in_mode,select the text you want to copy,copy}} ")
 	_ = tmuxRun("set-option", "-g", "status-left-length", "80")
 	_ = tmuxRun("set-option", "-g", "status-right", "#[bg=colour240,fg=colour255]  ← back to tulip #[default]")
 	_ = tmuxRun("set-option", "-g", "status-right-length", "22")
@@ -140,7 +140,7 @@ func tmuxKillSession(name string) error {
 
 
 // tmuxSetGraftStatus updates the @grafting session variable so the status bar
-// reflects the current graft state: "", "active", or "crashed".
+// reflects the current graft state: "", "loading", "active", or "failed".
 func tmuxSetGraftStatus(session, status string) {
 	_ = tmuxRun("set-option", "-t", session, "@grafting", status)
 }
