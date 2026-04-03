@@ -231,6 +231,17 @@ func gitStageAndCommit(worktree, message string) error {
 	return nil
 }
 
+// gitFetch fetches and prunes remote refs from origin.
+func gitFetch(repoRoot string) error {
+	cmd := exec.Command("git", "fetch", "--prune", "origin")
+	cmd.Dir = repoRoot
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git fetch failed: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // gitPush pushes the given branch to origin, setting the upstream tracking ref.
 func gitPush(worktree, branch string) error {
 	cmd := exec.Command("git", "push", "-u", "origin", branch)

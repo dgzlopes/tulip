@@ -776,7 +776,15 @@ func (m *model) createWorkerCmd(branch string) tea.Cmd {
 			return errMsg{fmt.Errorf("project %q already exists", branch)}
 		}
 
-		if err := gitCreateWorktree(repoRoot, branch, worktreePath); err != nil {
+		_ = gitFetch(repoRoot)
+
+		var err error
+		if gitBranchExistsLocally(repoRoot, branch) {
+			err = gitCreateWorktree(repoRoot, branch, worktreePath)
+		} else {
+			err = gitCreateWorktreeFromBase(repoRoot, branch, worktreePath, "origin/HEAD")
+		}
+		if err != nil {
 			var stale StaleWorktreeError
 			if errors.As(err, &stale) {
 				return staleWorktreeMsg{branch: branch}
@@ -811,7 +819,9 @@ func (m *model) createWorkerCmdWithBase(branch, base string) tea.Cmd {
 			return errMsg{fmt.Errorf("project %q already exists", branch)}
 		}
 
-		if err := gitCreateWorktreeFromBase(repoRoot, branch, worktreePath, base); err != nil {
+		_ = gitFetch(repoRoot)
+
+		if err := gitCreateWorktreeFromBase(repoRoot, branch, worktreePath, "origin/"+base); err != nil {
 			var stale StaleWorktreeError
 			if errors.As(err, &stale) {
 				return staleWorktreeMsg{branch: branch, base: base}
