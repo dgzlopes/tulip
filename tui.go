@@ -173,33 +173,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				w.Status = newStatus
 				changed = true
 			}
-			winName := "watch/" + w.Branch
-			if tmuxIsWindowDead(w.Session, winName) {
-				code := tmuxWindowExitStatus(w.Session, winName)
-				tmuxKillWindow(w.Session, winName)
-				if code != 0 {
-					if w.GraftStatus != "failed" {
+				if w.GraftStatus == "active" {
+				winName := "watch/" + w.Branch
+				if tmuxIsWindowDead(w.Session, winName) {
+					code := tmuxWindowExitStatus(w.Session, winName)
+					tmuxKillWindow(w.Session, winName)
+					if code != 0 {
 						w.GraftStatus = "failed"
 						tmuxSetGraftStatus(w.Session, "failed")
-						changed = true
+						m.notif = fmt.Sprintf("✗  graft failed (exit %d) on %s", code, w.Branch)
+						m.notifIsErr = true
+						m.notifTick = 8
+					} else {
+						w.GraftStatus = ""
+						tmuxSetGraftStatus(w.Session, "")
 					}
-					m.notif = fmt.Sprintf("✗  graft failed (exit %d) on %s", code, w.Branch)
-					m.notifIsErr = true
-					m.notifTick = 8
-				} else if w.GraftStatus != "" {
+					changed = true
+				} else if !tmuxHasWindow(w.Session, winName) {
 					w.GraftStatus = ""
 					tmuxSetGraftStatus(w.Session, "")
-					changed = true
-				}
-			} else {
-				grafting := tmuxHasWindow(w.Session, winName)
-				newGS := ""
-				if grafting {
-					newGS = "active"
-				}
-				if w.GraftStatus != newGS {
-					w.GraftStatus = newGS
-					tmuxSetGraftStatus(w.Session, newGS)
 					changed = true
 				}
 			}
@@ -242,6 +234,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case graftDoneMsg:
 		m.grafting = false
+		for i := range m.state.Workers {
+			if m.state.Workers[i].Branch == msg.branch {
+				gs := "active"
+				if msg.err != nil {
+					gs = "failed"
+				}
+				m.state.Workers[i].GraftStatus = gs
+				tmuxSetGraftStatus(m.state.Workers[i].Session, gs)
+				break
+			}
+		}
 		if msg.err != nil {
 			m.notif = "✗  " + msg.err.Error()
 			m.notifIsErr = true
@@ -706,13 +709,6 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case 2: // graft — run inline
 			m.mode = modeNormal
-			for i := range m.state.Workers {
-				if m.state.Workers[i].Branch == branch {
-					m.state.Workers[i].GraftStatus = "loading"
-					tmuxSetGraftStatus(m.state.Workers[i].Session, "loading")
-					break
-				}
-			}
 			m.pickedWorker = nil
 			m.grafting = true
 			return m, tea.Batch(m.graftCmd(branch), m.spinner.Tick)
@@ -758,18 +754,14 @@ func (m *model) graftCmd(branch string) tea.Cmd {
 				tmuxKillWindow(w.Session, winName)
 			}
 		}
+		if err := graftSymlinkDist(repoRoot, target.Worktree); err != nil {
+			return graftDoneMsg{branch: branch, err: fmt.Errorf("could not symlink dist: %w", err)}
+		}
 		winName := "watch/" + branch
-		if err := tmuxNewWindow(target.Session, winName, target.Worktree, ""); err != nil {
+		if err := tmuxNewWindow(target.Session, winName, target.Worktree, "yarn install && yarn run watch"); err != nil {
 			return graftDoneMsg{branch: branch, err: fmt.Errorf("could not start graft: %w", err)}
 		}
 		tmuxSetWindowOption(target.Session, winName, "remain-on-exit", "on")
-		if err := graftSymlinkDist(repoRoot, target.Worktree); err != nil {
-			tmuxKillWindow(target.Session, winName)
-			return graftDoneMsg{branch: branch, err: fmt.Errorf("could not symlink dist: %w", err)}
-		}
-		if err := tmuxSendKeys(target.Session+":"+winName, "yarn install && yarn run watch"); err != nil {
-			return graftDoneMsg{branch: branch, err: fmt.Errorf("could not send graft command: %w", err)}
-		}
 		return graftDoneMsg{branch: branch}
 	}
 }
@@ -954,8 +946,6 @@ func (m model) viewMain() string {
 			num := sDim.Render(fmt.Sprintf("%d", wk.ID))
 			row := num + "  " + dot + " " + branch
 			switch wk.GraftStatus {
-			case "loading":
-				row += "  " + sDim.Render("graft: loading")
 			case "active":
 				row += "  " + sGreen.Render("graft: active")
 			case "failed":
@@ -1011,8 +1001,7 @@ func (m model) viewHelp() string {
 	lines = append(lines, "")
 	lines = append(lines, "  "+sBold.Render("graft status"))
 	lines = append(lines, "")
-	lines = append(lines, "  "+sDim.Render("graft: loading")+"  "+sDim.Render("graft is starting up"))
-	lines = append(lines, "  "+sGreen.Render("graft: active")+"   "+sDim.Render("graft watch is running"))
+	lines = append(lines, "  "+sGreen.Render("graft: active")+"  "+sDim.Render("graft watch is running"))
 	lines = append(lines, "  "+sRed.Render("graft: failed")+"   "+sDim.Render("graft watch exited unexpectedly"))
 	lines = append(lines, "")
 	lines = append(lines, "  "+sKey.Render("esc")+" "+sDim.Render("to go back"))
