@@ -37,8 +37,24 @@ func tmuxHasSession(name string) bool {
 }
 
 // tmuxNewSession creates a new detached tmux session with the given name, starting in startDir.
-func tmuxNewSession(name, startDir string) error {
-	return tmuxRun("new-session", "-d", "-s", name, "-c", startDir)
+// branch is stored as a session variable so the status bar can display it.
+func tmuxNewSession(name, branch, startDir string) error {
+	if err := tmuxRun("new-session", "-d", "-s", name, "-n", "claude", "-c", startDir); err != nil {
+		return err
+	}
+	_ = tmuxRun("set-option", "-t", name, "@branch", branch)
+	_ = tmuxRun("set-option", "-g", "status", "on")
+	_ = tmuxRun("set-option", "-g", "status-style", "bg=colour235,fg=colour245")
+	_ = tmuxRun("set-option", "-g", "status-left", "#[fg=colour6,bold] #{s|watch/.*|Graft Debug|:#{s|shell/.*|Shell|:#{s|claude|Claude Code|:#{window_name}}}} #[nobold,fg=colour8]— #[fg=colour245]#{@branch}  ")
+	_ = tmuxRun("set-option", "-g", "status-left-length", "60")
+	_ = tmuxRun("set-option", "-g", "status-right", "#[bg=colour240,fg=colour255]  ← back to tulip #[default]")
+	_ = tmuxRun("set-option", "-g", "status-right-length", "22")
+	_ = tmuxRun("set-option", "-g", "window-status-format", "")
+	_ = tmuxRun("set-option", "-g", "window-status-current-format", "")
+	_ = tmuxRun("set-option", "-g", "window-status-separator", "")
+	_ = tmuxRun("set-option", "-g", "mouse", "on")
+	_ = tmuxRun("bind-key", "-n", "MouseDown1StatusRight", "detach-client")
+	return nil
 }
 
 // tmuxSendKeys sends a command followed by Enter to the given tmux session.
@@ -115,4 +131,35 @@ func tmuxKillSession(name string) error {
 		return nil
 	}
 	return tmuxRun("kill-session", "-t", name)
+}
+
+// tmuxCapturePaneLast returns the last n lines of the visible pane content for a session.
+func tmuxCapturePaneLast(session string, n int) string {
+	cmd := exec.Command("tmux", tmuxArgs([]string{
+		"capture-pane", "-p", "-t", session, "-J",
+	})...)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	all := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(all) > n {
+		all = all[len(all)-n:]
+	}
+	return strings.Join(all, "\n")
+}
+
+// claudeSessionStatus returns "working", "idle", or "no-session".
+// It detects whether Claude is actively processing by looking for the
+// "ESC to interrupt" hint that the Claude CLI renders while busy.
+// When idle, Claude shows "? for shortcuts" at the bottom instead.
+func claudeSessionStatus(session string) string {
+	if !tmuxHasSession(session) {
+		return "no-session"
+	}
+	content := tmuxCapturePaneLast(session, 5)
+	if strings.Contains(content, "ESC to interrupt") {
+		return "working"
+	}
+	return "idle"
 }

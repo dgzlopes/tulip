@@ -27,15 +27,16 @@ var (
 // ── Base styles ───────────────────────────────────────────────────────────────
 
 var (
-	sCyan   = lipgloss.NewStyle().Foreground(cCyan)
-	sGreen  = lipgloss.NewStyle().Foreground(cGreen)
-	sRed    = lipgloss.NewStyle().Foreground(cRed)
-	sGrey   = lipgloss.NewStyle().Foreground(cGrey)
-	sTitle  = lipgloss.NewStyle().Foreground(cPurple).Bold(true)
-	sBold   = lipgloss.NewStyle().Foreground(cGrey).Bold(true)
-	sDim    = lipgloss.NewStyle().Faint(true)
-	sKey    = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
-	sHeader = lipgloss.NewStyle().Bold(true).Foreground(cGrey)
+	sCyan    = lipgloss.NewStyle().Foreground(cCyan)
+	sGreen   = lipgloss.NewStyle().Foreground(cGreen)
+	sRed     = lipgloss.NewStyle().Foreground(cRed)
+	sGrey    = lipgloss.NewStyle().Foreground(cGrey)
+	sTitle   = lipgloss.NewStyle().Foreground(cPurple).Bold(true)
+	sBold    = lipgloss.NewStyle().Foreground(cGrey).Bold(true)
+	sDim     = lipgloss.NewStyle().Faint(true)
+	sCommand = lipgloss.NewStyle().Foreground(cGrey).Italic(true)
+	sKey     = lipgloss.NewStyle().Foreground(cCyan).Bold(true)
+	sHeader  = lipgloss.NewStyle().Bold(true).Foreground(cGrey)
 )
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
@@ -50,11 +51,10 @@ const (
 	modeNewForkBase      // pick base branch to fork from
 	modeNewForkName      // type name for the new forked branch
 	modeDelete
-	modeStaleWorktree   // confirm prune-and-retry
-	modeBranchExists    // confirm start from existing branch
-	modePick            // action picker for selected project
-	modePublish         // commit message input before publishing
-	modeTerminalWarning // confirm before taking over the terminal
+	modeStaleWorktree // confirm prune-and-retry
+	modeBranchExists  // confirm start from existing branch
+	modePick          // action picker for selected project
+	modePublish       // commit message input before publishing
 )
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -66,38 +66,43 @@ type workerDeletedMsg struct{ branch string }
 type errMsg struct{ err error }
 type staleWorktreeMsg struct{ branch, base string }
 type branchExistsMsg struct{ branch string }
-type graftDoneMsg struct{ branch string; err error }
-type publishDoneMsg struct{ branch string; err error }
+type graftDoneMsg struct {
+	branch string
+	err    error
+}
+type publishDoneMsg struct {
+	branch string
+	err    error
+}
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
 type model struct {
-	state         *State
-	repoRoot      string
-	cursor        int
-	mode          mode
-	input         textinput.Model
-	branches      []string
-	filtered      []string
-	listCursor    int
-	actionWorker  *Worker
-	notif         string
-	notifIsErr    bool
-	notifTick     int
-	workersScroll int
-	menuCursor    int
-	forkBase      string
+	state              *State
+	repoRoot           string
+	cursor             int
+	mode               mode
+	input              textinput.Model
+	branches           []string
+	filtered           []string
+	listCursor         int
+	actionWorker       *Worker
+	notif              string
+	notifIsErr         bool
+	notifTick          int
+	workersScroll      int
+	menuCursor         int
+	forkBase           string
 	staleBranch        string
 	staleBase          string
 	branchExistsBranch string
-	width         int
-	pickCursor    int
-	pickedWorker  *Worker
-	pickedAction  int // -1 = none
-	spinner        spinner.Model
-	grafting        bool
-	publishBranch   string
-	terminalAction  int // pickCursor value pending terminal-warning confirmation
+	width              int
+	pickCursor         int
+	pickedWorker       *Worker
+	pickedAction       int // -1 = none
+	spinner            spinner.Model
+	grafting           bool
+	publishBranch      string
 }
 
 func newModel(s *State, repoRoot string) model {
@@ -157,13 +162,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				continue
 			}
-			if tmuxHasSession(w.Session) {
-				if w.Status != "waiting" {
-					w.Status = "waiting"
-					changed = true
-				}
-			} else if w.Status != "idle" {
-				w.Status = "idle"
+			var newStatus string
+			switch claudeSessionStatus(w.Session) {
+			case "working":
+				newStatus = "working"
+			case "idle":
+				newStatus = "idle"
+			default:
+				newStatus = "stopped"
+			}
+			if w.Status != newStatus {
+				w.Status = newStatus
 				changed = true
 			}
 			winName := "watch/" + w.Branch
@@ -272,8 +281,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateBranchExists(msg)
 		case modePick:
 			return m.updatePick(msg)
-		case modeTerminalWarning:
-			return m.updateTerminalWarning(msg)
 		case modePublish:
 			return m.updatePublish(msg)
 		}
@@ -536,7 +543,7 @@ func restoreAllWorkersCmd(state *State) tea.Cmd {
 				continue
 			}
 			session := makeSessionName(w.Branch)
-			if err := tmuxNewSession(session, w.Worktree); err != nil {
+			if err := tmuxNewSession(session, w.Branch, w.Worktree); err != nil {
 				w.Status = "error"
 				changed = true
 				continue
@@ -668,10 +675,12 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		branch := m.pickedWorker.Branch
 		switch m.pickCursor {
-		case 0, 1: // claude, shell — warn before taking over terminal
-			m.terminalAction = m.pickCursor
-			m.mode = modeTerminalWarning
-			return m, nil
+		case 0: // claude
+			m.pickedAction = 0
+			return m, tea.Quit
+		case 1: // shell
+			m.pickedAction = 1
+			return m, tea.Quit
 		case 3: // graft-debug — only quit if the watch window exists
 			wk := m.pickedWorker
 			if !tmuxHasWindow(wk.Session, "watch/"+branch) {
@@ -682,9 +691,8 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.notifTick = 6
 				return m, nil
 			}
-			m.terminalAction = m.pickCursor
-			m.mode = modeTerminalWarning
-			return m, nil
+			m.pickedAction = 3
+			return m, tea.Quit
 		case 2: // graft — run inline
 			m.mode = modeNormal
 			m.pickedWorker = nil
@@ -708,53 +716,6 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
-}
-
-// terminalActionCmd maps a terminalAction index to its CLI sub-command name.
-func terminalActionCmd(action int) string {
-	switch action {
-	case 0:
-		return "claude"
-	case 1:
-		return "shell"
-	case 3:
-		return "graft-debug"
-	}
-	return ""
-}
-
-func (m model) updateTerminalWarning(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch k.String() {
-	case "esc", "q":
-		m.mode = modePick
-	case "enter", "y":
-		m.pickedAction = m.terminalAction
-		return m, tea.Quit
-	}
-	return m, nil
-}
-
-func (m model) viewTerminalWarning() string {
-	if m.pickedWorker == nil {
-		return ""
-	}
-	branch := m.pickedWorker.Branch
-	cmd := terminalActionCmd(m.terminalAction)
-	sep := "  " + sDim.Render("·") + "  "
-	var lines []string
-	lines = append(lines, m.pageHeader())
-	lines = append(lines, "")
-	lines = append(lines, sHeader.Render("  "+branch))
-	lines = append(lines, "")
-	lines = append(lines, "  ⚠️  "+sBold.Render("tulip "+cmd+" "+branch)+" "+sDim.Render("will take over this terminal."))
-	lines = append(lines, "")
-	lines = append(lines, "  "+sDim.Render("To keep the TUI open, run that command in a separate terminal instead."))
-	lines = append(lines, "")
-	lines = append(lines, "  "+
-		sKey.Render("enter")+" "+sDim.Render("take over this terminal")+
-		sep+
-		sKey.Render("esc")+" "+sDim.Render("back"))
-	return strings.Join(lines, "\n")
 }
 
 func (m *model) graftCmd(branch string) tea.Cmd {
@@ -801,10 +762,8 @@ func (m *model) createWorkerCmd(branch string) tea.Cmd {
 		worktreePath := filepath.Join(repoRoot, ".tulip", "worktrees", branch)
 		gitEnsureExclude(repoRoot)
 
-		if existing := findWorker(state, branch); existing != nil {
-			if tmuxHasSession(existing.Session) {
-				return workerCreatedMsg{branch: branch}
-			}
+		if findWorker(state, branch) != nil {
+			return errMsg{fmt.Errorf("project %q already exists", branch)}
 		}
 
 		if err := gitCreateWorktree(repoRoot, branch, worktreePath); err != nil {
@@ -838,6 +797,10 @@ func (m *model) createWorkerCmdWithBase(branch, base string) tea.Cmd {
 		worktreePath := filepath.Join(repoRoot, ".tulip", "worktrees", branch)
 		gitEnsureExclude(repoRoot)
 
+		if findWorker(state, branch) != nil {
+			return errMsg{fmt.Errorf("project %q already exists", branch)}
+		}
+
 		if err := gitCreateWorktreeFromBase(repoRoot, branch, worktreePath, base); err != nil {
 			var stale StaleWorktreeError
 			if errors.As(err, &stale) {
@@ -860,7 +823,7 @@ func startSession(state *State, branch, worktreePath string) tea.Msg {
 	if tmuxHasSession(session) {
 		_ = tmuxKillSession(session)
 	}
-	if err := tmuxNewSession(session, worktreePath); err != nil {
+	if err := tmuxNewSession(session, branch, worktreePath); err != nil {
 		return errMsg{err}
 	}
 
@@ -900,8 +863,6 @@ func (m model) View() string {
 		return m.modalBranchExists()
 	case modePick:
 		return m.viewPick()
-	case modeTerminalWarning:
-		return m.viewTerminalWarning()
 	case modePublish:
 		return m.modalPublish()
 	}
@@ -924,7 +885,7 @@ func (m *model) syncWorkersScroll() {
 }
 
 func (m model) pageHeader() string {
-	h := sTitle.Render("🌷 tulip") + " " + sDim.Render("— work with Claude Code on multiple projects in a single repo")
+	h := sTitle.Render("🌷 tulip") + " " + sDim.Render("— a nicer way to work with Claude Code")
 	if m.grafting {
 		h += "  " + m.spinner.View() + sDim.Render(" grafting…")
 	}
@@ -961,8 +922,19 @@ func (m model) viewMain() string {
 			if len(branch) > colB {
 				branch = branch[:colB-1] + "…"
 			}
+			var dot string
+			switch wk.Status {
+			case "working":
+				dot = sCyan.Render("●")
+			case "idle":
+				dot = sGreen.Render("●")
+			case "error":
+				dot = sRed.Render("●")
+			default: // stopped, waiting
+				dot = sGrey.Render("●")
+			}
 			num := sDim.Render(fmt.Sprintf("%d", wk.ID))
-			row := num + "  " + branch
+			row := num + "  " + dot + " " + branch
 			if wk.Grafting {
 				row += "  " + sCyan.Render("⌁ grafting")
 			}
@@ -989,7 +961,7 @@ func (m model) viewMain() string {
 	if total > 0 && m.cursor < total {
 		wk := m.state.Workers[m.cursor]
 		lines = append(lines, "")
-		lines = append(lines, "  "+sDim.Render("to interact with a project")+"  "+sBold.Render("↵ enter")+"  "+sDim.Render("or run")+" "+sCyan.Render(fmt.Sprintf("tulip %d", wk.ID)))
+		lines = append(lines, "  "+sDim.Render("to interact press")+" "+sCyan.Render("↵ enter")+" "+sDim.Render("or run")+" "+sCommand.Render(fmt.Sprintf("tulip %s", wk.Branch)))
 	}
 
 	return strings.Join(lines, "\n")
@@ -1179,8 +1151,16 @@ func (m model) modalPublish() string {
 
 // runTUI runs the TUI and returns the final model so the caller can act on any
 // picked action after the screen is restored.
-func runTUI(s *State, repoRoot string) (model, error) {
-	p := tea.NewProgram(newModel(s, repoRoot), tea.WithAltScreen())
+func runTUI(s *State, repoRoot, resumeBranch string) (model, error) {
+	m := newModel(s, repoRoot)
+	if resumeBranch != "" {
+		if w := findWorker(s, resumeBranch); w != nil {
+			m.pickedWorker = w
+			m.pickedAction = -1
+			m.mode = modePick
+		}
+	}
+	p := tea.NewProgram(m, tea.WithAltScreen())
 	final, err := p.Run()
 	if err != nil {
 		return model{}, err

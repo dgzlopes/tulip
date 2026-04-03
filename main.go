@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -64,6 +63,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
+		if err := cmdTUI(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "shell":
 		if len(args) < 2 {
@@ -71,6 +74,10 @@ func main() {
 			os.Exit(1)
 		}
 		if err := cmdShell(args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := cmdTUI(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -91,6 +98,10 @@ func main() {
 			os.Exit(1)
 		}
 		if err := cmdGraftDebug(args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := cmdTUI(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -164,9 +175,13 @@ func cmdPick(nameOrID string) error {
 	}
 	switch chosen {
 	case 0:
-		return cmdOpen(w.Branch)
+		if err := cmdOpen(w.Branch); err != nil {
+			return err
+		}
 	case 1:
-		return cmdShell(w.Branch)
+		if err := cmdShell(w.Branch); err != nil {
+			return err
+		}
 	case 2:
 		return cmdWatch(w.Branch)
 	case 3:
@@ -181,8 +196,10 @@ func cmdPick(nameOrID string) error {
 			return nil
 		}
 		return cmdPublish(w.Branch, msg)
+	default:
+		return nil
 	}
-	return nil
+	return cmdTUI()
 }
 
 type pickerModel struct {
@@ -240,6 +257,8 @@ func runPicker(branch string) (int, error) {
 }
 
 // cmdTUI launches the Bubble Tea TUI and executes any action chosen inside it.
+// After terminal-taking actions (claude, shell, graft-debug) return, the TUI
+// is shown again so the user can pick another action without restarting tulip.
 func cmdTUI() error {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -247,43 +266,55 @@ func cmdTUI() error {
 	}
 	gitEnsureExclude(repoRoot)
 
-	s, err := loadState(repoRoot)
-	if err != nil {
-		return fmt.Errorf("load state: %w", err)
-	}
+	resumeBranch := ""
+	for {
+		s, err := loadState(repoRoot)
+		if err != nil {
+			return fmt.Errorf("load state: %w", err)
+		}
 
-	fm, err := runTUI(s, repoRoot)
-	if err != nil {
-		return err
-	}
+		fm, err := runTUI(s, repoRoot, resumeBranch)
+		if err != nil {
+			return err
+		}
+		resumeBranch = ""
 
-	if fm.pickedAction < 0 || fm.pickedWorker == nil {
-		return nil
-	}
-	branch := fm.pickedWorker.Branch
-	switch fm.pickedAction {
-	case 0:
-		return cmdOpen(branch)
-	case 1:
-		return cmdShell(branch)
-	case 2:
-		return cmdWatch(branch)
-	case 3:
-		return cmdGraftDebug(branch)
-	case 4:
-		return cmdVSCode(branch)
-	case 5:
-		fmt.Print("commit message: ")
-		reader := bufio.NewReader(os.Stdin)
-		msg, _ := reader.ReadString('\n')
-		msg = strings.TrimSpace(msg)
-		if msg == "" {
-			fmt.Println("cancelled.")
+		if fm.pickedAction < 0 || fm.pickedWorker == nil {
 			return nil
 		}
-		return cmdPublish(branch, msg)
+		branch := fm.pickedWorker.Branch
+		switch fm.pickedAction {
+		case 0:
+			if err := cmdOpen(branch); err != nil {
+				return err
+			}
+			resumeBranch = branch
+		case 1:
+			if err := cmdShell(branch); err != nil {
+				return err
+			}
+			resumeBranch = branch
+		case 2:
+			return cmdWatch(branch)
+		case 3:
+			if err := cmdGraftDebug(branch); err != nil {
+				return err
+			}
+			resumeBranch = branch
+		case 4:
+			return cmdVSCode(branch)
+		case 5:
+			fmt.Print("commit message: ")
+			reader := bufio.NewReader(os.Stdin)
+			msg, _ := reader.ReadString('\n')
+			msg = strings.TrimSpace(msg)
+			if msg == "" {
+				fmt.Println("cancelled.")
+				return nil
+			}
+			return cmdPublish(branch, msg)
+		}
 	}
-	return nil
 }
 
 // requireWorker loads state, finds the worker for branch, and ensures its tmux
@@ -309,7 +340,7 @@ func requireWorker(branch string) (*State, *Worker, error) {
 	}
 
 	if !tmuxHasSession(w.Session) {
-		if err := tmuxNewSession(w.Session, w.Worktree); err != nil {
+		if err := tmuxNewSession(w.Session, w.Branch, w.Worktree); err != nil {
 			return nil, nil, fmt.Errorf("restart session: %w", err)
 		}
 		claudeCmd := fmt.Sprintf("claude --name %q", w.Branch)
@@ -329,15 +360,16 @@ func requireWorker(branch string) (*State, *Worker, error) {
 	return s, w, nil
 }
 
-// tmuxAttach clears the screen then replaces the current process with tmux attach-session.
+// tmuxAttach clears the screen then runs tmux attach-session as a subprocess.
+// When the user detaches (Ctrl+B D), the subprocess exits and control returns
+// to the caller so the TUI can be shown again.
 func tmuxAttach(target string) error {
-	tmuxBin, err := exec.LookPath("tmux")
-	if err != nil {
-		return fmt.Errorf("tmux not found: %w", err)
-	}
 	fmt.Print("\033[H\033[2J\033[3J")
-	argv := append([]string{"tmux"}, tmuxArgs([]string{"attach-session", "-t", target})...)
-	return syscall.Exec(tmuxBin, argv, os.Environ())
+	cmd := exec.Command("tmux", tmuxArgs([]string{"attach-session", "-t", target})...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // cmdOpen attaches to (or restarts) the Claude session for the given branch.
@@ -346,26 +378,27 @@ func cmdOpen(branch string) error {
 	if err != nil {
 		return err
 	}
-	return tmuxAttach(w.Session)
+	return tmuxAttach(w.Session + ":claude")
 }
 
-// cmdShell opens an interactive shell in the worktree, replacing the current process.
+// cmdShell opens an interactive shell in a persistent tmux window inside the worker's session.
+// The window is reused across visits so scrollback and history are preserved.
 func cmdShell(branch string) error {
 	_, w, err := requireWorker(branch)
 	if err != nil {
 		return err
 	}
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
+	winName := "shell/" + branch
+	if !tmuxHasWindow(w.Session, winName) {
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "/bin/sh"
+		}
+		if err := tmuxNewWindow(w.Session, winName, w.Worktree, shell); err != nil {
+			return err
+		}
 	}
-	fmt.Print("\033[H\033[2J\033[3J")
-	cmd := exec.Command(shell)
-	cmd.Dir = w.Worktree
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return tmuxAttach(w.Session + ":" + winName)
 }
 
 // cmdWatch switches the active Graft preview to the given branch.
