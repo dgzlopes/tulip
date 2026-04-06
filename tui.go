@@ -1076,15 +1076,26 @@ func (m model) pageHeader() string {
 	return h
 }
 
+func prLabel(number int) string {
+	if number > 0 {
+		return fmt.Sprintf("PR #%d", number)
+	}
+	return "PR: -"
+}
+
 func (m model) viewMain() string {
 	colB := 0
 	maxID := 0
+	colPR := len("PR: -")
 	for _, w := range m.state.Workers {
 		if len(w.Branch) > colB {
 			colB = len(w.Branch)
 		}
 		if w.ID > maxID {
 			maxID = w.ID
+		}
+		if l := len(prLabel(w.PRNumber)); l > colPR {
+			colPR = l
 		}
 	}
 	if colB > 26 {
@@ -1122,10 +1133,14 @@ func (m model) viewMain() string {
 			branch = fmt.Sprintf("%-*s", colB, branch)
 			num := sDim.Render(fmt.Sprintf("%*d", colID, wk.ID))
 			row := num + "  " + dot + " " + branch
+			label := prLabel(wk.PRNumber)
+			padded := fmt.Sprintf("%-*s", colPR, label)
 			if wk.PRNumber > 0 {
-				row += "  " + prBadge(wk.PRNumber, wk.PRState, wk.PRURL)
+				// replace the label portion with the styled+linked version, keep trailing pad
+				trailing := padded[len(label):]
+				row += "  " + prBadge(wk.PRNumber, wk.PRState, wk.PRURL) + trailing
 			} else {
-				row += "  " + sDim.Render("PR: -")
+				row += "  " + sDim.Render(padded)
 			}
 			switch wk.GraftStatus {
 			case "active":
