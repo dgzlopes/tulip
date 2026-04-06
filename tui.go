@@ -998,10 +998,8 @@ func (m *model) syncWorkersScroll() {
 	}
 }
 
-const prBadgeWidth = 8 // width of "PR #9999"
-
 func prBadge(number int, state, url string) string {
-	label := fmt.Sprintf("%-*s", prBadgeWidth, fmt.Sprintf("PR #%d", number))
+	label := fmt.Sprintf("PR #%d", number)
 	var styled string
 	switch state {
 	case "OPEN":
@@ -1088,13 +1086,13 @@ func (m model) viewMain() string {
 			if wk.PRNumber > 0 {
 				row += "  " + prBadge(wk.PRNumber, wk.PRState, wk.PRURL)
 			} else {
-				row += "  " + sDim.Render(fmt.Sprintf("%-*s", prBadgeWidth, "PR: -"))
+				row += "  " + sDim.Render("PR: -")
 			}
 			switch wk.GraftStatus {
 			case "active":
-				row += "  " + sGreen.Render("graft 🐝")
+				row += " " + sGreen.Render("🐝")
 			case "failed":
-				row += "  " + sRed.Render("graft: failed") + " " + sDim.Render("(see graft-debug)")
+				row += " " + sRed.Render("🐝 failed") + " " + sDim.Render("(see graft-debug)")
 			}
 			if i == m.cursor {
 				lines = append(lines, "  "+sCyan.Render("▶")+" "+row)
@@ -1146,7 +1144,7 @@ func (m model) viewHelp() string {
 	lines = append(lines, "")
 	lines = append(lines, "  "+sBold.Render("graft status"))
 	lines = append(lines, "")
-	lines = append(lines, "  "+sGreen.Render("graft 🐝")+"  "+sDim.Render("graft watch is running"))
+	lines = append(lines, "  "+sGreen.Render("🐝")+"  "+sDim.Render("graft watch is running"))
 	lines = append(lines, "  "+sRed.Render("graft: failed")+"   "+sDim.Render("graft watch exited unexpectedly"))
 	lines = append(lines, "")
 	lines = append(lines, "  "+sKey.Render("esc")+" "+sDim.Render("to go back"))
