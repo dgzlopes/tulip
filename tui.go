@@ -31,6 +31,7 @@ var (
 	sGreen   = lipgloss.NewStyle().Foreground(cGreen)
 	sRed     = lipgloss.NewStyle().Foreground(cRed)
 	sGrey    = lipgloss.NewStyle().Foreground(cGrey)
+	sPurple  = lipgloss.NewStyle().Foreground(cPurple)
 	sTitle   = lipgloss.NewStyle().Foreground(cPurple).Bold(true)
 	sBold    = lipgloss.NewStyle().Foreground(cGrey).Bold(true)
 	sDim     = lipgloss.NewStyle().Faint(true)
@@ -62,6 +63,11 @@ const (
 
 type branchesLoadedMsg []string
 type tickMsg struct{}
+type slowTickMsg struct{}
+type prRefreshedMsg struct {
+	branch string
+	pr     prInfo
+}
 type workerCreatedMsg struct{ branch string }
 type workerDeletedMsg struct{ branch string }
 type errMsg struct{ err error }
@@ -132,7 +138,7 @@ func newModel(s *State, repoRoot string) model {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(loadBranchesCmd(m.repoRoot), tickCmd(), restoreAllWorkersCmd(m.state))
+	return tea.Batch(loadBranchesCmd(m.repoRoot), tickCmd(), slowTickCmd(), restoreAllWorkersCmd(m.state))
 }
 
 func loadBranchesCmd(repoRoot string) tea.Cmd {
@@ -143,6 +149,17 @@ func (m *model) addLog(_ string) {} // logs hidden
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(2*time.Second, func(_ time.Time) tea.Msg { return tickMsg{} })
+}
+
+func slowTickCmd() tea.Cmd {
+	return tea.Tick(30*time.Second, func(_ time.Time) tea.Msg { return slowTickMsg{} })
+}
+
+func refreshPRCmd(branch string) tea.Cmd {
+	return func() tea.Msg {
+		pr, _ := fetchPRForBranch(branch)
+		return prRefreshedMsg{branch: branch, pr: pr}
+	}
 }
 
 // ── Update ────────────────────────────────────────────────────────────────────
@@ -211,6 +228,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tickCmd()
+
+	case slowTickMsg:
+		var cmds []tea.Cmd
+		cmds = append(cmds, slowTickCmd())
+		for _, w := range m.state.Workers {
+			cmds = append(cmds, refreshPRCmd(w.Branch))
+		}
+		return m, tea.Batch(cmds...)
+
+	case prRefreshedMsg:
+		for i := range m.state.Workers {
+			if m.state.Workers[i].Branch == msg.branch {
+				w := &m.state.Workers[i]
+				if w.PRNumber != msg.pr.Number || w.PRState != msg.pr.State || w.PRURL != msg.pr.URL {
+					w.PRNumber = msg.pr.Number
+					w.PRState = msg.pr.State
+					w.PRURL = msg.pr.URL
+					_ = saveState(m.state)
+				}
+				break
+			}
+		}
+		return m, nil
 
 	case fetchDoneMsg:
 		m.fetching = false
@@ -928,6 +968,28 @@ func (m *model) syncWorkersScroll() {
 	}
 }
 
+func prBadge(number int, state, url string) string {
+	label := fmt.Sprintf("PR #%d", number)
+	var styled string
+	switch state {
+	case "OPEN":
+		styled = sCyan.Render(label)
+	case "DRAFT":
+		styled = sGrey.Render(label)
+	case "MERGED":
+		styled = sPurple.Render(label)
+	case "CLOSED":
+		styled = sRed.Render(label)
+	default:
+		styled = sDim.Render(label)
+	}
+	if url != "" {
+		// OSC 8 terminal hyperlink: \e]8;;URL\e\\ text \e]8;;\e\\
+		styled = "\x1b]8;;" + url + "\x1b\\" + styled + "\x1b]8;;\x1b\\"
+	}
+	return styled
+}
+
 func (m model) pageHeader() string {
 	h := sTitle.Render("🌷 tulip") + " " + sDim.Render("— a nicer way to work with Claude Code")
 	if m.grafting {
@@ -978,8 +1040,14 @@ func (m model) viewMain() string {
 			default: // clean
 				dot = sGrey.Render("●")
 			}
+			branch = fmt.Sprintf("%-*s", colB, branch)
 			num := sDim.Render(fmt.Sprintf("%d", wk.ID))
 			row := num + "  " + dot + " " + branch
+			if wk.PRNumber > 0 {
+				row += "  " + prBadge(wk.PRNumber, wk.PRState, wk.PRURL)
+			} else {
+				row += "  " + sDim.Render("PR: -")
+			}
 			switch wk.GraftStatus {
 			case "active":
 				row += "  " + sGreen.Render("graft: active")

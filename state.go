@@ -20,6 +20,9 @@ type Worker struct {
 	GraftStatus    string `json:"graft_status,omitempty"` // "", "active", "failed"
 	CreatedAt      string `json:"created_at"`
 	SessionStarted bool   `json:"session_started"`
+	PRNumber int    `json:"pr_number,omitempty"`
+	PRState  string `json:"pr_state,omitempty"` // "OPEN", "DRAFT", "MERGED", "CLOSED"
+	PRURL    string `json:"pr_url,omitempty"`
 }
 
 // State is the persistent state for garrison in a given repo.
