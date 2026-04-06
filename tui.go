@@ -259,11 +259,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case workerCreatedMsg:
 
 	case workerDeletedMsg:
-		text := "🗑️  deleted " + msg.branch
-		m.notif = text
-		m.notifIsErr = false
-		m.notifTick = 4
-		(&m).addLog(sGreen.Render("✓") + "  " + text)
 
 	case errMsg:
 		text := msg.err.Error()
@@ -297,9 +292,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.notif = "✗  " + msg.err.Error()
 			m.notifIsErr = true
-		} else {
-			m.notif = "✓  grafting " + msg.branch
-			m.notifIsErr = false
 		}
 		m.notifTick = 6
 
@@ -307,9 +299,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.notif = "✗  " + msg.err.Error()
 			m.notifIsErr = true
-		} else {
-			m.notif = "✓  published " + msg.branch
-			m.notifIsErr = false
 		}
 		m.notifTick = 6
 
@@ -769,9 +758,6 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeNormal
 			m.pickedWorker = nil
 			go func() { _ = cmdVSCode(branch) }()
-			m.notif = "✓  opened " + branch + " in VS Code"
-			m.notifIsErr = false
-			m.notifTick = 4
 		case 5: // publish — collect commit message inline
 			m.publishBranch = branch
 			m.pickedWorker = nil
