@@ -19,6 +19,7 @@ type Worker struct {
 	Status         string `json:"status"`
 	GraftStatus    string `json:"graft_status,omitempty"` // "", "active", "failed"
 	CreatedAt      string `json:"created_at"`
+	DeletedAt      string `json:"deleted_at,omitempty"`
 	SessionStarted bool   `json:"session_started"`
 	PRNumber int    `json:"pr_number,omitempty"`
 	PRState  string `json:"pr_state,omitempty"` // "OPEN", "DRAFT", "MERGED", "CLOSED"
@@ -27,9 +28,10 @@ type Worker struct {
 
 // State is the persistent state for garrison in a given repo.
 type State struct {
-	Repo    string   `json:"repo"`
-	NextID  int      `json:"next_id"`
-	Workers []Worker `json:"workers"`
+	Repo           string   `json:"repo"`
+	NextID         int      `json:"next_id"`
+	Workers        []Worker `json:"workers"`
+	DeletedWorkers []Worker `json:"deleted_workers,omitempty"`
 }
 
 // findRepoRoot walks up from cwd until it finds a directory containing .git.
@@ -139,4 +141,23 @@ func removeWorker(s *State, id int) {
 		}
 	}
 	s.Workers = filtered
+}
+
+// archiveWorker moves a worker to DeletedWorkers, recording the deletion time.
+func archiveWorker(s *State, id int) {
+	var kept []Worker
+	for _, w := range s.Workers {
+		if w.ID == id {
+			w.DeletedAt = time.Now().Format("Jan 02 15:04")
+			w.Worktree = ""
+			w.Session = ""
+			w.Status = ""
+			w.GraftStatus = ""
+			w.SessionStarted = false
+			s.DeletedWorkers = append([]Worker{w}, s.DeletedWorkers...)
+		} else {
+			kept = append(kept, w)
+		}
+	}
+	s.Workers = kept
 }

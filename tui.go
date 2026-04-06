@@ -58,6 +58,7 @@ const (
 	modePick          // action picker for selected project
 	modePublish       // commit message input before publishing
 	modeHelp          // help screen
+	modeHistory       // deleted projects history
 )
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -99,6 +100,8 @@ type model struct {
 	filtered           []string
 	listCursor         int
 	actionWorker       *Worker
+	historyCursor      int
+	historyScroll      int
 	notif              string
 	notifIsErr         bool
 	notifTick          int
@@ -351,6 +354,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updatePublish(msg)
 		case modeHelp:
 			return m.updateHelp(msg)
+		case modeHistory:
+			return m.updateHistory(msg)
 		}
 	}
 
@@ -385,6 +390,12 @@ func (m model) updateNormal(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor < len(m.state.Workers) {
 			m.actionWorker = &m.state.Workers[m.cursor]
 			m.mode = modeDelete
+		}
+	case "h":
+		if len(m.state.DeletedWorkers) > 0 {
+			m.historyCursor = 0
+			m.historyScroll = 0
+			m.mode = modeHistory
 		}
 	case "?":
 		m.mode = modeHelp
@@ -929,7 +940,7 @@ func (m *model) deleteWorkerCmd(w Worker) tea.Cmd {
 	return func() tea.Msg {
 		_ = tmuxKillSession(w.Session)
 		_ = gitRemoveWorktree(repoRoot, w.Worktree)
-		removeWorker(state, w.ID)
+		archiveWorker(state, w.ID)
 		if err := saveState(state); err != nil {
 			return errMsg{err}
 		}
@@ -987,6 +998,8 @@ func (m model) View() string {
 		return m.modalPublish()
 	case modeHelp:
 		return m.viewHelp()
+	case modeHistory:
+		return m.viewHistory()
 	}
 	return m.viewMain()
 }
@@ -1123,6 +1136,9 @@ func (m model) viewMain() string {
 	if total > 0 {
 		footer += "   " + sKey.Render("d") + " " + sDim.Render("delete project")
 	}
+	if len(m.state.DeletedWorkers) > 0 {
+		footer += "   " + sKey.Render("h") + " " + sDim.Render("history")
+	}
 	footer += "   " + sKey.Render("q") + " " + sDim.Render("quit")
 	footer += "   " + sKey.Render("?") + " " + sDim.Render("help")
 	lines = append(lines, footer)
@@ -1159,6 +1175,79 @@ func (m model) viewHelp() string {
 	lines = append(lines, "")
 	lines = append(lines, "  "+sGreen.Render("🐝")+"  "+sDim.Render("graft watch is running"))
 	lines = append(lines, "  "+sRed.Render("graft: failed")+"   "+sDim.Render("graft watch exited unexpectedly"))
+	lines = append(lines, "")
+	lines = append(lines, "  "+sKey.Render("esc")+" "+sDim.Render("to go back"))
+	return strings.Join(lines, "\n")
+}
+
+func (m model) updateHistory(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	deleted := m.state.DeletedWorkers
+	switch k.String() {
+	case "esc", "q", "h":
+		m.mode = modeNormal
+	case "up", "k":
+		if m.historyCursor > 0 {
+			m.historyCursor--
+			if m.historyCursor < m.historyScroll {
+				m.historyScroll = m.historyCursor
+			}
+		}
+	case "down", "j":
+		if m.historyCursor < len(deleted)-1 {
+			m.historyCursor++
+			if m.historyCursor >= m.historyScroll+maxWorkersVisible {
+				m.historyScroll = m.historyCursor - maxWorkersVisible + 1
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m model) viewHistory() string {
+	deleted := m.state.DeletedWorkers
+	var lines []string
+	lines = append(lines, m.pageHeader())
+	lines = append(lines, "")
+	lines = append(lines, sHeader.Render("  History"))
+	lines = append(lines, "")
+
+	colB := 0
+	for _, w := range deleted {
+		if len(w.Branch) > colB {
+			colB = len(w.Branch)
+		}
+	}
+	if colB > 26 {
+		colB = 26
+	}
+
+	end := m.historyScroll + maxWorkersVisible
+	if end > len(deleted) {
+		end = len(deleted)
+	}
+	for i := m.historyScroll; i < end; i++ {
+		w := deleted[i]
+		branch := w.Branch
+		if len(branch) > colB {
+			branch = branch[:colB-1] + "…"
+		}
+		branch = fmt.Sprintf("%-*s", colB, branch)
+		row := sDim.Render(w.DeletedAt) + "  " + branch
+		if w.PRNumber > 0 {
+			row += "  " + prBadge(w.PRNumber, w.PRState, w.PRURL)
+		} else {
+			row += "  " + sDim.Render("PR: -")
+		}
+		if i == m.historyCursor {
+			lines = append(lines, "  "+sCyan.Render("▶")+" "+row)
+		} else {
+			lines = append(lines, "    "+row)
+		}
+	}
+	if len(deleted) > maxWorkersVisible {
+		lines = append(lines, sGrey.Render(fmt.Sprintf("  … %d more", len(deleted)-maxWorkersVisible)))
+	}
+
 	lines = append(lines, "")
 	lines = append(lines, "  "+sKey.Render("esc")+" "+sDim.Render("to go back"))
 	return strings.Join(lines, "\n")
