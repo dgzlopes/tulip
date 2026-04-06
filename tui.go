@@ -919,6 +919,19 @@ func (m *model) createWorkerAfterFetchCmd(branch, base string) tea.Cmd {
 				}
 				return errMsg{err}
 			}
+		} else if gitBranchExistsRemotely(repoRoot, branch) {
+			err = gitCreateWorktreeFromBase(repoRoot, branch, worktreePath, "origin/"+branch)
+			if err != nil {
+				var stale StaleWorktreeError
+				if errors.As(err, &stale) {
+					return staleWorktreeMsg{branch: branch}
+				}
+				var exists BranchExistsError
+				if errors.As(err, &exists) {
+					return branchExistsMsg{branch: branch}
+				}
+				return errMsg{err}
+			}
 		} else {
 			defaultBase := gitDefaultRemoteBranch(repoRoot)
 			err = gitCreateWorktreeFromBase(repoRoot, branch, worktreePath, defaultBase)

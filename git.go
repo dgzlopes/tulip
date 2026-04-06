@@ -71,6 +71,13 @@ func gitBranchExistsLocally(repoRoot, branch string) bool {
 	return cmd.Run() == nil
 }
 
+// gitBranchExistsRemotely returns true if origin/<branch> exists as a remote ref.
+func gitBranchExistsRemotely(repoRoot, branch string) bool {
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+branch)
+	cmd.Dir = repoRoot
+	return cmd.Run() == nil
+}
+
 // BranchExistsError is returned when trying to create a new branch that already exists locally.
 type BranchExistsError struct{ Branch string }
 
