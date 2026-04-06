@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -734,6 +735,9 @@ func (m *model) publishCmd(branch, message string) tea.Cmd {
 
 func (m model) pickedActions() []struct{ name, desc string } {
 	actions := pickActions[:]
+	if m.pickedWorker != nil && m.pickedWorker.Status == "dirty" {
+		actions = append(actions, struct{ name, desc string }{"difit", "open difit for this worktree"})
+	}
 	if m.pickedWorker != nil && m.pickedWorker.PRURL != "" {
 		actions = append(actions, struct{ name, desc string }{"open-pr", "open pull request in browser"})
 	}
@@ -791,7 +795,17 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input.Focus()
 			m.mode = modePublish
 			return m, textinput.Blink
-		case 6: // open-pr
+		case 6: // difit — only shown when dirty
+			m.mode = modeNormal
+			m.pickedWorker = nil
+			if _, err := exec.LookPath("difit"); err != nil {
+				m.notif = "✗  difit not installed — https://github.com/yoshiko-pg/difit"
+				m.notifIsErr = true
+				m.notifTick = 10
+				return m, nil
+			}
+			go func() { _ = cmdDiffit(branch) }()
+		case 7: // open-pr — only shown when PR exists
 			m.mode = modeNormal
 			url := m.pickedWorker.PRURL
 			m.pickedWorker = nil

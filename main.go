@@ -480,6 +480,15 @@ func openInBrowser(url string) error {
 	return exec.Command("open", url).Run()
 }
 
+// cmdDiffit runs `difit .` in a tmux window inside the worker's session.
+func cmdDiffit(branch string) error {
+	_, w, err := requireWorker(branch)
+	if err != nil {
+		return err
+	}
+	return tmuxNewWindow(w.Session, "difit", w.Worktree, "difit .")
+}
+
 // cmdVSCode opens the worktree in VS Code.
 func cmdVSCode(branch string) error {
 	_, w, err := requireWorker(branch)
