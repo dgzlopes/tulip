@@ -19,7 +19,7 @@ func gitIsDirty(worktree string) bool {
 
 // gitListRecentBranches returns recently-active branches (remote + local), sorted by
 // committer date and deduplicated. Returns an empty slice on error. HEAD is stripped.
-func gitListRecentBranches(repoRoot string) []string {
+func gitListRecentBranches(repoRoot string) ([]string, map[string]bool) {
 	cmd := exec.Command(
 		"git",
 		"for-each-ref",
@@ -31,9 +31,10 @@ func gitListRecentBranches(repoRoot string) []string {
 	cmd.Dir = repoRoot
 	out, err := cmd.Output()
 	if err != nil {
-		return []string{}
+		return []string{}, map[string]bool{}
 	}
 	seen := map[string]bool{}
+	local := map[string]bool{}
 	var branches []string
 	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		l = strings.TrimSpace(l)
@@ -52,6 +53,9 @@ func gitListRecentBranches(repoRoot string) []string {
 		if name == "HEAD" {
 			continue
 		}
+		if strings.HasPrefix(fullref, "refs/heads/") {
+			local[name] = true
+		}
 		// skip remote refs that have a local counterpart (already or will be added)
 		if strings.HasPrefix(fullref, "refs/remotes/") && seen[name] {
 			continue
@@ -61,7 +65,7 @@ func gitListRecentBranches(repoRoot string) []string {
 			branches = append(branches, name)
 		}
 	}
-	return branches
+	return branches, local
 }
 
 // gitBranchExistsLocally returns true if the given branch exists as a local ref.
@@ -154,6 +158,8 @@ func gitPruneWorktrees(repoRoot string) error {
 
 // gitCreateWorktreeFromBase creates a new branch off baseBranch and adds a worktree for it.
 func gitCreateWorktreeFromBase(repoRoot, branch, worktreePath, baseBranch string) error {
+	// Remove orphaned directory left by a previous failed attempt.
+	_ = os.RemoveAll(worktreePath)
 	args := []string{"worktree", "add", "-b", branch, worktreePath, baseBranch}
 	cmd := exec.Command("git", args...)
 	cmd.Dir = repoRoot
@@ -165,7 +171,7 @@ func gitCreateWorktreeFromBase(repoRoot, branch, worktreePath, baseBranch string
 			}
 			return fmt.Errorf("branch %q is already checked out in another worktree", branch)
 		}
-		if bytes.Contains(out, []byte("already exists")) {
+		if bytes.Contains(out, []byte("A branch named")) && bytes.Contains(out, []byte("already exists")) {
 			return BranchExistsError{Branch: branch}
 		}
 		return fmt.Errorf("git worktree add failed: %s", strings.TrimSpace(string(out)))
@@ -174,12 +180,12 @@ func gitCreateWorktreeFromBase(repoRoot, branch, worktreePath, baseBranch string
 }
 
 // gitRemoveWorktree forcibly removes a git worktree at the given path.
+// If git doesn't know about the path (orphaned directory), falls back to os.RemoveAll.
 func gitRemoveWorktree(repoRoot, worktreePath string) error {
 	cmd := exec.Command("git", "worktree", "remove", "--force", worktreePath)
 	cmd.Dir = repoRoot
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git worktree remove failed: %s", strings.TrimSpace(string(out)))
+	if _, err := cmd.CombinedOutput(); err != nil {
+		return os.RemoveAll(worktreePath)
 	}
 	return nil
 }

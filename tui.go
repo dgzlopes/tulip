@@ -63,7 +63,10 @@ const (
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 
-type branchesLoadedMsg []string
+type branchesLoadedMsg struct {
+	names []string
+	local map[string]bool
+}
 type tickMsg struct{}
 type slowTickMsg struct{}
 type prRefreshedMsg struct {
@@ -97,6 +100,7 @@ type model struct {
 	mode               mode
 	input              textinput.Model
 	branches           []string
+	localBranches      map[string]bool
 	filtered           []string
 	listCursor         int
 	actionWorker       *Worker
@@ -155,7 +159,10 @@ func (m model) Init() tea.Cmd {
 }
 
 func loadBranchesCmd(repoRoot string) tea.Cmd {
-	return func() tea.Msg { return branchesLoadedMsg(gitListRecentBranches(repoRoot)) }
+	return func() tea.Msg {
+		names, local := gitListRecentBranches(repoRoot)
+		return branchesLoadedMsg{names: names, local: local}
+	}
 }
 
 func (m *model) addLog(_ string) {} // logs hidden
@@ -184,7 +191,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 
 	case branchesLoadedMsg:
-		m.branches = []string(msg)
+		m.branches = msg.names
+		m.localBranches = msg.local
 		m.filtered = m.branches
 
 	case tickMsg:
@@ -1227,6 +1235,23 @@ func (m model) updateHistory(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.historyScroll = m.historyCursor - maxWorkersVisible + 1
 			}
 		}
+	case "x":
+		if m.historyCursor < len(deleted) {
+			s := m.state
+			s.DeletedWorkers = append(s.DeletedWorkers[:m.historyCursor], s.DeletedWorkers[m.historyCursor+1:]...)
+			if m.historyCursor >= len(s.DeletedWorkers) && m.historyCursor > 0 {
+				m.historyCursor--
+			}
+			if len(s.DeletedWorkers) == 0 {
+				m.mode = modeNormal
+			}
+			return m, func() tea.Msg {
+				if err := saveState(s); err != nil {
+					return errMsg{err}
+				}
+				return nil
+			}
+		}
 	}
 	return m, nil
 }
@@ -1277,7 +1302,7 @@ func (m model) viewHistory() string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, "  "+sKey.Render("esc")+" "+sDim.Render("to go back"))
+	lines = append(lines, "  "+sKey.Render("x")+" "+sDim.Render("remove entry")+"   "+sKey.Render("esc")+" "+sDim.Render("to go back"))
 	return strings.Join(lines, "\n")
 }
 
@@ -1396,10 +1421,16 @@ func (m model) branchListLines() []string {
 	lines := []string{sDim.Render("  recently active:")}
 	for i := 0; i < limit; i++ {
 		b := m.filtered[i]
-		if i == m.listCursor {
-			lines = append(lines, sCyan.Render("▶ ")+sBold.Render(b))
+		var tag string
+		if m.localBranches[b] {
+			tag = " " + sDim.Render("local")
 		} else {
-			lines = append(lines, "  "+sGrey.Render(b))
+			tag = " " + sDim.Render("remote")
+		}
+		if i == m.listCursor {
+			lines = append(lines, sCyan.Render("▶ ")+sBold.Render(b)+tag)
+		} else {
+			lines = append(lines, "  "+sGrey.Render(b)+tag)
 		}
 	}
 	return lines
