@@ -1044,14 +1044,19 @@ func (m model) pageHeader() string {
 
 func (m model) viewMain() string {
 	colB := 0
+	maxID := 0
 	for _, w := range m.state.Workers {
 		if len(w.Branch) > colB {
 			colB = len(w.Branch)
+		}
+		if w.ID > maxID {
+			maxID = w.ID
 		}
 	}
 	if colB > 26 {
 		colB = 26
 	}
+	colID := len(fmt.Sprintf("%d", maxID))
 
 	var lines []string
 	lines = append(lines, m.pageHeader())
@@ -1081,7 +1086,7 @@ func (m model) viewMain() string {
 				dot = sGrey.Render("●")
 			}
 			branch = fmt.Sprintf("%-*s", colB, branch)
-			num := sDim.Render(fmt.Sprintf("%d", wk.ID))
+			num := sDim.Render(fmt.Sprintf("%*d", colID, wk.ID))
 			row := num + "  " + dot + " " + branch
 			if wk.PRNumber > 0 {
 				row += "  " + prBadge(wk.PRNumber, wk.PRState, wk.PRURL)
