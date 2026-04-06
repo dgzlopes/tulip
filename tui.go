@@ -114,6 +114,7 @@ type model struct {
 	spinner            spinner.Model
 	grafting           bool
 	fetching           bool
+	prLoading          int
 	publishBranch      string
 }
 
@@ -132,13 +133,21 @@ func newModel(s *State, repoRoot string) model {
 		width:        80,
 		pickedAction: -1,
 		spinner:      sp,
+		prLoading:    len(s.Workers),
 	}
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(loadBranchesCmd(m.repoRoot), tickCmd(), slowTickCmd(), restoreAllWorkersCmd(m.state))
+	cmds := []tea.Cmd{loadBranchesCmd(m.repoRoot), tickCmd(), slowTickCmd(), restoreAllWorkersCmd(m.state)}
+	for _, w := range m.state.Workers {
+		cmds = append(cmds, refreshPRCmd(w.Branch))
+	}
+	if m.prLoading > 0 {
+		cmds = append(cmds, m.spinner.Tick)
+	}
+	return tea.Batch(cmds...)
 }
 
 func loadBranchesCmd(repoRoot string) tea.Cmd {
@@ -230,14 +239,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case slowTickMsg:
-		var cmds []tea.Cmd
-		cmds = append(cmds, slowTickCmd())
+		cmds := []tea.Cmd{slowTickCmd()}
 		for _, w := range m.state.Workers {
+			m.prLoading++
 			cmds = append(cmds, refreshPRCmd(w.Branch))
+		}
+		if m.prLoading > 0 {
+			cmds = append(cmds, m.spinner.Tick)
 		}
 		return m, tea.Batch(cmds...)
 
 	case prRefreshedMsg:
+		if m.prLoading > 0 {
+			m.prLoading--
+		}
 		for i := range m.state.Workers {
 			if m.state.Workers[i].Branch == msg.branch {
 				w := &m.state.Workers[i]
@@ -257,6 +272,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.createWorkerAfterFetchCmd(msg.branch, msg.base)
 
 	case workerCreatedMsg:
+		m.prLoading++
+		return m, tea.Batch(refreshPRCmd(msg.branch), m.spinner.Tick)
 
 	case workerDeletedMsg:
 
@@ -303,7 +320,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notifTick = 6
 
 	case spinner.TickMsg:
-		if m.grafting || m.fetching {
+		if m.grafting || m.fetching || m.prLoading > 0 {
 			m.spinner, _ = m.spinner.Update(msg)
 		}
 
@@ -983,6 +1000,9 @@ func (m model) pageHeader() string {
 	}
 	if m.fetching {
 		h += "  " + m.spinner.View() + sDim.Render(" fetching…")
+	}
+	if m.prLoading > 0 {
+		h += "  " + m.spinner.View() + sDim.Render(" loading PRs…")
 	}
 	if m.notif != "" {
 		var ns string
