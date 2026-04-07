@@ -55,13 +55,6 @@ func tmuxApplyGlobalSettings() {
 	_ = tmuxRun("bind-key", "-T", "copy-mode", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel", "pbcopy")
 	// Remove legacy root-table MouseDragEnd1Pane that older tulip versions set.
 	_ = tmuxRun("unbind-key", "-n", "MouseDragEnd1Pane")
-	// Don't enter copy mode from mouse wheel or drag in normal mode — some terminals
-	// fire a spurious scroll/drag event during the attach transition, which would
-	// immediately land the user in copy mode. Explicit copy mode is still available
-	// via the status-left "copy" button. Scrolling in copy mode still works normally.
-	_ = tmuxRun("bind-key", "-n", "WheelUpPane", "send-keys", "-M")
-	_ = tmuxRun("bind-key", "-n", "WheelDownPane", "send-keys", "-M")
-	_ = tmuxRun("bind-key", "-n", "MouseDrag1Pane", "send-keys", "-M")
 	_ = tmuxRun("bind-key", "-n", "MouseDown1StatusRight", "detach-client")
 	_ = tmuxRun("bind-key", "-n", "MouseUp1StatusRight", "detach-client")
 	_ = tmuxRun("bind-key", "-T", "copy-mode", "MouseDown1StatusRight", "detach-client")

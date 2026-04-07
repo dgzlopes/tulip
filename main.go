@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -368,6 +369,14 @@ func requireWorker(branch string) (*State, *Worker, error) {
 // to the caller so the TUI can be shown again.
 func tmuxAttach(target string) error {
 	fmt.Print("\033[H\033[2J\033[3J")
+	// Suppress WheelUpPane during the attach transition: some terminals fire a
+	// spurious scroll event as tmux takes over the terminal, which would enter
+	// copy mode immediately. Restore the binding after a short delay.
+	_ = tmuxRun("bind-key", "-n", "WheelUpPane", "send-keys", "-M")
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_ = tmuxRun("bind-key", "-n", "WheelUpPane", "copy-mode", "-e")
+	}()
 	cmd := exec.Command("tmux", tmuxArgs([]string{"attach-session", "-t", target})...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
