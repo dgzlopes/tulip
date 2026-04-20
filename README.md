@@ -67,6 +67,7 @@ tulip graft <id|branch>          # start yarn watch for live preview (switches a
 tulip graft-debug <id|branch>    # attach to the graft watch output
 tulip vscode <id|branch>         # open the worktree in VS Code
 tulip publish <id|branch> <msg>  # stage all, commit (signed), and push
+tulip config graft-command <cmd> # set the command run when grafting (default: yarn install && yarn run watch)
 ```
 
 The `↵` action menu also provides: **difit** (visual diff, requires [difit](https://github.com/yoshiko-pg/difit)) and **open-pr** (open PR in browser).
