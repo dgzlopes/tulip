@@ -95,6 +95,7 @@ type publishDoneMsg struct {
 
 type model struct {
 	state              *State
+	config             *Config
 	repoRoot           string
 	cursor             int
 	mode               mode
@@ -126,7 +127,7 @@ type model struct {
 	publishBranch      string
 }
 
-func newModel(s *State, repoRoot string) model {
+func newModel(s *State, cfg *Config, repoRoot string) model {
 	ti := textinput.New()
 	ti.Placeholder = "branch name or filter…"
 	ti.CharLimit = 200
@@ -136,6 +137,7 @@ func newModel(s *State, repoRoot string) model {
 	sp.Style = lipgloss.NewStyle().Foreground(cCyan)
 	return model{
 		state:        s,
+		config:       cfg,
 		repoRoot:     repoRoot,
 		input:        ti,
 		width:        80,
@@ -839,7 +841,7 @@ func (m model) updatePick(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) graftCmd(branch string) tea.Cmd {
-	state, repoRoot := m.state, m.repoRoot
+	state, repoRoot, cfg := m.state, m.repoRoot, m.config
 	return func() tea.Msg {
 		var target *Worker
 		for i := range state.Workers {
@@ -864,7 +866,7 @@ func (m *model) graftCmd(branch string) tea.Cmd {
 			return graftDoneMsg{branch: branch, err: fmt.Errorf("could not symlink dist: %w", err)}
 		}
 		winName := "watch/" + branch
-		if err := tmuxNewWindow(target.Session, winName, target.Worktree, "yarn install && yarn run watch"); err != nil {
+		if err := tmuxNewWindow(target.Session, winName, target.Worktree, cfg.GraftCmd()); err != nil {
 			return graftDoneMsg{branch: branch, err: fmt.Errorf("could not start graft: %w", err)}
 		}
 		tmuxSetWindowOption(target.Session, winName, "remain-on-exit", "on")
@@ -1505,7 +1507,11 @@ func (m model) modalPublish() string {
 // runTUI runs the TUI and returns the final model so the caller can act on any
 // picked action after the screen is restored.
 func runTUI(s *State, repoRoot, resumeBranch string) (model, error) {
-	m := newModel(s, repoRoot)
+	cfg, err := loadConfig(repoRoot)
+	if err != nil {
+		return model{}, fmt.Errorf("load config: %w", err)
+	}
+	m := newModel(s, cfg, repoRoot)
 	if resumeBranch != "" {
 		if w := findWorker(s, resumeBranch); w != nil {
 			m.pickedWorker = w
