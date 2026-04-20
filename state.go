@@ -34,6 +34,55 @@ type State struct {
 	DeletedWorkers []Worker `json:"deleted_workers,omitempty"`
 }
 
+const defaultGraftCommand = "yarn install && yarn run watch"
+
+// Config holds per-repo tulip configuration, separate from ephemeral state.
+type Config struct {
+	GraftCommand string `json:"graft_command,omitempty"`
+}
+
+// GraftCmd returns the configured graft command, falling back to the default.
+func (c *Config) GraftCmd() string {
+	if c.GraftCommand != "" {
+		return c.GraftCommand
+	}
+	return defaultGraftCommand
+}
+
+// configPath returns the path to the tulip config file for a given repo root.
+func configPath(repoRoot string) string {
+	return filepath.Join(repoRoot, ".tulip", "config.json")
+}
+
+// loadConfig loads config from disk, returning an empty Config if the file doesn't exist.
+func loadConfig(repoRoot string) (*Config, error) {
+	data, err := os.ReadFile(configPath(repoRoot))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &Config{}, nil
+		}
+		return nil, err
+	}
+	var c Config
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// saveConfig writes config to disk, creating directories as needed.
+func saveConfig(repoRoot string, c *Config) error {
+	path := configPath(repoRoot)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
 // findRepoRoot walks up from cwd until it finds a directory containing .git.
 func findRepoRoot() (string, error) {
 	dir, err := os.Getwd()

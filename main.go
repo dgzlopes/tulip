@@ -17,14 +17,15 @@ var version = "dev"
 const usage = `tulip — parallel Claude Code sessions on a single repo
 
 Usage:
-  tulip                     launch TUI
-  tulip claude <branch>     attach to the Claude session (restart if needed)
-  tulip shell <branch>      open an empty terminal in the worktree
-  tulip graft <branch>      switch active Graft preview to this branch
-  tulip graft-debug <branch> attach to the Graft watch output
-  tulip publish <branch>    stage all, commit (signed), and push
-  tulip vscode <branch>     open the worktree in VS Code
-  tulip reset               wipe all projects
+  tulip                              launch TUI
+  tulip claude <branch>              attach to the Claude session (restart if needed)
+  tulip shell <branch>               open an empty terminal in the worktree
+  tulip graft <branch>               switch active Graft preview to this branch
+  tulip graft-debug <branch>         attach to the Graft watch output
+  tulip publish <branch>             stage all, commit (signed), and push
+  tulip vscode <branch>              open the worktree in VS Code
+  tulip config graft-command <cmd>   set the command run when grafting (default: yarn install && yarn run watch)
+  tulip reset                        wipe all projects
 
 Options:
   -h, --help    show this help
@@ -132,6 +133,16 @@ func main() {
 
 	case "reset":
 		if err := cmdReset(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "config":
+		if len(args) < 3 || args[1] != "graft-command" {
+			fmt.Fprintln(os.Stderr, "usage: tulip config graft-command <command>")
+			os.Exit(1)
+		}
+		if err := cmdConfigSet("graft-command", strings.Join(args[2:], " ")); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -424,6 +435,10 @@ func cmdWatch(branch string) error {
 	if err != nil {
 		return err
 	}
+	cfg, err := loadConfig(repoRoot)
+	if err != nil {
+		return err
+	}
 	// Validate the target before touching anything.
 	var target *Worker
 	for i := range s.Workers {
@@ -455,7 +470,7 @@ func cmdWatch(branch string) error {
 		tmuxKillWindow(target.Session, winName)
 		return fmt.Errorf("could not symlink dist: %w", err)
 	}
-	if err := tmuxSendKeys(target.Session+":"+winName, "yarn install && yarn run watch"); err != nil {
+	if err := tmuxSendKeys(target.Session+":"+winName, cfg.GraftCmd()); err != nil {
 		return fmt.Errorf("could not send graft command: %w", err)
 	}
 	fmt.Printf("grafting %s\n", branch)
@@ -514,6 +529,28 @@ func cmdVSCode(branch string) error {
 }
 
 // cmdReset wipes all workers, sessions, and worktrees after user confirmation.
+func cmdConfigSet(key, value string) error {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfig(repoRoot)
+	if err != nil {
+		return err
+	}
+	switch key {
+	case "graft-command":
+		cfg.GraftCommand = value
+		if err := saveConfig(repoRoot, cfg); err != nil {
+			return err
+		}
+		fmt.Printf("graft-command set to: %s\n", value)
+	default:
+		return fmt.Errorf("unknown config key %q", key)
+	}
+	return nil
+}
+
 func cmdReset() error {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
