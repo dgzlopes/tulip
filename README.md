@@ -18,6 +18,10 @@ https://github.com/user-attachments/assets/c750da08-e3db-473f-b013-555b248aa3fd
 - tmux, or a [Rex](https://www.superlogical.com/rex) terminal
 - [Claude Code](https://claude.ai/code)
 
+## The project list
+
+The list grows to fill the terminal. Projects whose PR has merged are hidden by default (nothing is deleted); press `m` to show or hide them. Git status and graft state refresh in the background, so large repos with many projects stay responsive.
+
 ## Backends
 
 tulip runs each session in either tmux or Rex.

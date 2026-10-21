@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -68,6 +69,71 @@ type branchesLoadedMsg struct {
 	local map[string]bool
 }
 type tickMsg struct{}
+
+// pollResult is what one background poll learned about a worker.
+type pollResult struct {
+	branch       string
+	status       string // "dirty", "clean", "error", or "" for no change
+	graftStatus  string // set to "failed" when a graft window died non-zero
+	graftCleared bool   // graft window finished OK or disappeared
+	notif        string
+}
+type pollDoneMsg struct{ results []pollResult }
+
+// pollWorkersCmd refreshes every worker's git status and graft state
+// concurrently on copies of the workers, so the UI never waits on it.
+func pollWorkersCmd(workers []Worker) tea.Cmd {
+	snapshot := append([]Worker(nil), workers...)
+	return func() tea.Msg {
+		results := make([]pollResult, len(snapshot))
+		sem := make(chan struct{}, 8)
+		var wg sync.WaitGroup
+		for i := range snapshot {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(i int) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				results[i] = pollWorker(snapshot[i])
+			}(i)
+		}
+		wg.Wait()
+		return pollDoneMsg{results: results}
+	}
+}
+
+func pollWorker(w Worker) pollResult {
+	r := pollResult{branch: w.Branch}
+	if _, err := os.Stat(w.Worktree); os.IsNotExist(err) {
+		r.status = "error"
+		return r
+	}
+	if gitIsDirty(w.Worktree) {
+		r.status = "dirty"
+	} else {
+		r.status = "clean"
+	}
+	if w.GraftStatus == "active" {
+		winName := "watch/" + w.Branch
+		if tmuxIsWindowDead(w.Session, winName) {
+			code := tmuxWindowExitStatus(w.Session, winName)
+			tmuxKillWindow(w.Session, winName)
+			if code != 0 {
+				r.graftStatus = "failed"
+				tmuxSetGraftStatus(w.Session, "failed")
+				r.notif = fmt.Sprintf("✗  graft failed (exit %d) on %s", code, w.Branch)
+			} else {
+				r.graftCleared = true
+				tmuxSetGraftStatus(w.Session, "")
+			}
+		} else if !tmuxHasWindow(w.Session, winName) {
+			r.graftCleared = true
+			tmuxSetGraftStatus(w.Session, "")
+		}
+	}
+	return r
+}
+
 type slowTickMsg struct{}
 type prRefreshedMsg struct {
 	branch string
@@ -95,6 +161,9 @@ type publishDoneMsg struct {
 
 type model struct {
 	state              *State
+	polling            bool
+	showMerged         bool
+	height             int
 	config             *Config
 	repoRoot           string
 	cursor             int
@@ -191,6 +260,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
+		(&m).syncWorkersScroll()
 
 	case branchesLoadedMsg:
 		m.branches = msg.names
@@ -198,59 +269,53 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.filtered = m.branches
 
 	case tickMsg:
-		changed := false
-		for i := range m.state.Workers {
-			w := &m.state.Workers[i]
-			if _, err := os.Stat(w.Worktree); os.IsNotExist(err) {
-				if w.Status != "error" {
-					w.Status = "error"
-					changed = true
-				}
-				continue
-			}
-			var newStatus string
-			if gitIsDirty(w.Worktree) {
-				newStatus = "dirty"
-			} else {
-				newStatus = "clean"
-			}
-			if w.Status != newStatus {
-				w.Status = newStatus
-				changed = true
-			}
-				if w.GraftStatus == "active" {
-				winName := "watch/" + w.Branch
-				if tmuxIsWindowDead(w.Session, winName) {
-					code := tmuxWindowExitStatus(w.Session, winName)
-					tmuxKillWindow(w.Session, winName)
-					if code != 0 {
-						w.GraftStatus = "failed"
-						tmuxSetGraftStatus(w.Session, "failed")
-						m.notif = fmt.Sprintf("✗  graft failed (exit %d) on %s", code, w.Branch)
-						m.notifIsErr = true
-						m.notifTick = 8
-					} else {
-						w.GraftStatus = ""
-						tmuxSetGraftStatus(w.Session, "")
-					}
-					changed = true
-				} else if !tmuxHasWindow(w.Session, winName) {
-					w.GraftStatus = ""
-					tmuxSetGraftStatus(w.Session, "")
-					changed = true
-				}
-			}
-		}
-		if changed {
-			_ = saveState(m.state)
-		}
 		if m.notifTick > 0 {
 			m.notifTick--
 			if m.notifTick == 0 {
 				m.notif = ""
 			}
 		}
-		return m, tickCmd()
+		// Polling shells out (git status per worktree, Rex/tmux calls), so run
+		// it off the UI loop and skip a round if the previous one is running.
+		if m.polling {
+			return m, tickCmd()
+		}
+		m.polling = true
+		return m, tea.Batch(tickCmd(), pollWorkersCmd(m.state.Workers))
+
+	case pollDoneMsg:
+		m.polling = false
+		changed := false
+		for _, r := range msg.results {
+			for i := range m.state.Workers {
+				w := &m.state.Workers[i]
+				if w.Branch != r.branch {
+					continue
+				}
+				if r.status != "" && w.Status != r.status {
+					w.Status = r.status
+					changed = true
+				}
+				if r.graftStatus != "" && w.GraftStatus != r.graftStatus {
+					w.GraftStatus = r.graftStatus
+					changed = true
+				}
+				if r.graftCleared && w.GraftStatus != "" {
+					w.GraftStatus = ""
+					changed = true
+				}
+				if r.notif != "" {
+					m.notif = r.notif
+					m.notifIsErr = true
+					m.notifTick = 8
+				}
+				break
+			}
+		}
+		if changed {
+			_ = saveState(m.state)
+		}
+		return m, nil
 
 	case slowTickMsg:
 		cmds := []tea.Cmd{slowTickCmd()}
@@ -279,6 +344,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+		(&m).clampCursor()
 		return m, nil
 
 	case fetchDoneMsg:
@@ -384,13 +450,13 @@ func (m model) updateNormal(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			(&m).syncWorkersScroll()
 		}
 	case "down", "j":
-		if m.cursor < len(m.state.Workers)-1 {
+		if m.cursor < len(m.shown())-1 {
 			m.cursor++
 			(&m).syncWorkersScroll()
 		}
 	case "enter":
-		if m.cursor < len(m.state.Workers) {
-			m.pickedWorker = &m.state.Workers[m.cursor]
+		if w := (&m).cursorWorker(); w != nil {
+			m.pickedWorker = w
 			m.pickCursor = 0
 			m.pickedAction = -1
 			m.mode = modePick
@@ -399,10 +465,14 @@ func (m model) updateNormal(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeNewMenu
 		m.menuCursor = 0
 	case "d":
-		if m.cursor < len(m.state.Workers) {
-			m.actionWorker = &m.state.Workers[m.cursor]
+		if w := (&m).cursorWorker(); w != nil {
+			m.actionWorker = w
 			m.mode = modeDelete
 		}
+	case "m":
+		m.showMerged = !m.showMerged
+		m.cursor = 0
+		(&m).clampCursor()
 	case "h":
 		if len(m.state.DeletedWorkers) > 0 {
 			m.historyCursor = 0
@@ -609,7 +679,7 @@ func (m model) updateDelete(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		w := *m.actionWorker
 		m.actionWorker = nil
 		m.mode = modeNormal
-		if m.cursor > 0 && m.cursor >= len(m.state.Workers)-1 {
+		if m.cursor > 0 && m.cursor >= len(m.shown())-1 {
 			m.cursor--
 		}
 		return m, m.deleteWorkerCmd(w)
@@ -1033,13 +1103,55 @@ func (m model) View() string {
 
 const maxWorkersVisible = 8
 
+// shown returns the indexes into state.Workers that the list displays: every
+// project, or all but those whose PR has merged (nothing is deleted).
+func (m model) shown() []int {
+	idx := make([]int, 0, len(m.state.Workers))
+	for i, w := range m.state.Workers {
+		if m.showMerged || w.PRState != "MERGED" {
+			idx = append(idx, i)
+		}
+	}
+	return idx
+}
+
+func (m model) hiddenCount() int { return len(m.state.Workers) - len(m.shown()) }
+
+// cursorWorker returns the project under the cursor, or nil if the list is empty.
+func (m *model) cursorWorker() *Worker {
+	idx := m.shown()
+	if m.cursor < 0 || m.cursor >= len(idx) {
+		return nil
+	}
+	return &m.state.Workers[idx[m.cursor]]
+}
+
+func (m *model) clampCursor() {
+	if n := len(m.shown()); m.cursor >= n {
+		m.cursor = n - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	m.syncWorkersScroll()
+}
+
+// visibleWorkers is how many project rows fit: the terminal height minus the
+// header, footer and help lines, but never fewer than maxWorkersVisible.
+func (m model) visibleWorkers() int {
+	if v := m.height - 10; v > maxWorkersVisible {
+		return v
+	}
+	return maxWorkersVisible
+}
+
 // syncWorkersScroll adjusts workersScroll to keep the cursor visible.
 func (m *model) syncWorkersScroll() {
 	if m.cursor < m.workersScroll {
 		m.workersScroll = m.cursor
 	}
-	if m.cursor >= m.workersScroll+maxWorkersVisible {
-		m.workersScroll = m.cursor - maxWorkersVisible + 1
+	if m.cursor >= m.workersScroll+m.visibleWorkers() {
+		m.workersScroll = m.cursor - m.visibleWorkers() + 1
 	}
 	if m.workersScroll < 0 {
 		m.workersScroll = 0
@@ -1121,16 +1233,21 @@ func (m model) viewMain() string {
 	lines = append(lines, m.pageHeader())
 	lines = append(lines, "")
 
-	total := len(m.state.Workers)
+	shown := m.shown()
+	total := len(shown)
 	if total == 0 {
-		lines = append(lines, sGrey.Render("  no projects"))
+		msg := "  no projects"
+		if n := m.hiddenCount(); n > 0 {
+			msg = fmt.Sprintf("  %d merged project(s) hidden — press m to show", n)
+		}
+		lines = append(lines, sGrey.Render(msg))
 	} else {
-		end := m.workersScroll + maxWorkersVisible
+		end := m.workersScroll + m.visibleWorkers()
 		if end > total {
 			end = total
 		}
 		for i := m.workersScroll; i < end; i++ {
-			wk := m.state.Workers[i]
+			wk := m.state.Workers[shown[i]]
 			branch := wk.Branch
 			if len(branch) > colB {
 				branch = branch[:colB-1] + "…"
@@ -1168,8 +1285,8 @@ func (m model) viewMain() string {
 				lines = append(lines, "    "+row)
 			}
 		}
-		if total > maxWorkersVisible {
-			lines = append(lines, sGrey.Render(fmt.Sprintf("  … %d more", total-maxWorkersVisible)))
+		if total > m.visibleWorkers() {
+			lines = append(lines, sGrey.Render(fmt.Sprintf("  … %d more", total-m.visibleWorkers())))
 		}
 	}
 
@@ -1178,6 +1295,11 @@ func (m model) viewMain() string {
 	if total > 0 {
 		footer += "   " + sKey.Render("d") + " " + sDim.Render("delete project")
 	}
+	if n := m.hiddenCount(); n > 0 {
+		footer += "   " + sKey.Render("m") + " " + sDim.Render(fmt.Sprintf("show merged (%d hidden)", n))
+	} else if m.showMerged {
+		footer += "   " + sKey.Render("m") + " " + sDim.Render("hide merged")
+	}
 	if len(m.state.DeletedWorkers) > 0 {
 		footer += "   " + sKey.Render("h") + " " + sDim.Render("history")
 	}
@@ -1185,7 +1307,7 @@ func (m model) viewMain() string {
 	footer += "   " + sKey.Render("?") + " " + sDim.Render("help")
 	lines = append(lines, footer)
 	if total > 0 && m.cursor < total {
-		wk := m.state.Workers[m.cursor]
+		wk := m.state.Workers[shown[m.cursor]]
 		lines = append(lines, "")
 		lines = append(lines, "  "+sDim.Render("to interact press")+" "+sCyan.Render("↵ enter")+" "+sDim.Render("or run")+" "+sCommand.Render(fmt.Sprintf("tulip %s", wk.Branch)))
 	}
