@@ -124,14 +124,11 @@ func rexRegister(session, branch string) {
 // rexShort strips the "tulip-" prefix tulip puts on session names.
 func rexShort(session string) string { return strings.TrimPrefix(session, "tulip-") }
 
-// rexGroup is the label shared by all of a worker's tabs: "<prefix><branch>"
-// when a prefix is configured, otherwise the slugged session name.
+// rexGroup is the label shared by all of a worker's tabs: the branch name,
+// preceded by the configured prefix if there is one.
 func rexGroup(session string) string {
 	rexMu.RLock()
 	defer rexMu.RUnlock()
-	if rexPrefix == "" {
-		return rexShort(session)
-	}
 	branch := rexBranches[session]
 	if branch == "" {
 		branch = rexShort(session)
@@ -143,11 +140,8 @@ func rexGroup(session string) string {
 // where kind is the first path segment of the tmux-style window name.
 func rexLabel(session, window string) string {
 	kind, _, _ := strings.Cut(window, "/")
-	rexMu.RLock()
-	prefixed := rexPrefix != ""
-	rexMu.RUnlock()
-	// With a prefix the Claude tab is just "<prefix><branch>"; other tabs add their kind.
-	if prefixed && kind == "claude" {
+	// The Claude tab is named after the branch alone; other tabs add their kind.
+	if kind == "claude" {
 		return rexGroup(session)
 	}
 	return rexGroup(session) + " · " + kind
