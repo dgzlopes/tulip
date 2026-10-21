@@ -75,7 +75,7 @@ func tmuxApplyGlobalSettings() {
 // branch is stored as a session variable so the status bar can display it.
 func tmuxNewSession(name, branch, startDir string) error {
 	if useRex {
-		return rexNewSession(name, startDir)
+		return rexNewSession(name, branch, startDir)
 	}
 	if err := tmuxRun("new-session", "-d", "-s", name, "-n", "claude", "-c", startDir); err != nil {
 		return err

@@ -28,6 +28,7 @@ Usage:
   tulip vscode <branch>              open the worktree in VS Code
   tulip config graft-command <cmd>   set the command run when grafting (default: yarn install && yarn run watch)
   tulip config graft-domain [domain] set the default Graft domain (opens a picker if domain is omitted)
+  tulip config tab-prefix [text]     name Rex tabs "<text> - <branch>" (no text clears it)
   tulip reset                        wipe all projects
 
 Options:
@@ -52,6 +53,10 @@ func main() {
 	if err := initBackend(backendFlag); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if useRex {
+		rexLoad()
 	}
 
 	// Initialise the dedicated tmux socket as early as possible so all tmux
@@ -165,7 +170,7 @@ func main() {
 
 	case "config":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: tulip config <graft-command|graft-domain> [value]")
+			fmt.Fprintln(os.Stderr, "usage: tulip config <graft-command|graft-domain|tab-prefix> [value]")
 			os.Exit(1)
 		}
 		switch args[1] {
@@ -175,6 +180,15 @@ func main() {
 				os.Exit(1)
 			}
 			if err := cmdConfigSet("graft-command", strings.Join(args[2:], " ")); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+		case "tab-prefix":
+			value := ""
+			if len(args) >= 3 {
+				value = strings.Join(args[2:], " ")
+			}
+			if err := cmdConfigSet("tab-prefix", value); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
@@ -188,7 +202,7 @@ func main() {
 				os.Exit(1)
 			}
 		default:
-			fmt.Fprintln(os.Stderr, "usage: tulip config <graft-command|graft-domain> [value]")
+			fmt.Fprintln(os.Stderr, "usage: tulip config <graft-command|graft-domain|tab-prefix> [value]")
 			os.Exit(1)
 		}
 
@@ -759,6 +773,16 @@ func cmdConfigSet(key, value string) error {
 			return err
 		}
 		fmt.Printf("graft-command set to: %s\n", value)
+	case "tab-prefix":
+		cfg.TabPrefix = value
+		if err := saveConfig(repoRoot, cfg); err != nil {
+			return err
+		}
+		if value == "" {
+			fmt.Println("tab-prefix cleared")
+		} else {
+			fmt.Printf("tab-prefix set to: %s\n", value)
+		}
 	default:
 		return fmt.Errorf("unknown config key %q", key)
 	}

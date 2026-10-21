@@ -90,14 +90,67 @@ func rexWindows() []rexWindow {
 	return rexCache
 }
 
+var (
+	rexMu       sync.RWMutex
+	rexPrefix   string                // from config tab-prefix; "" keeps "<branch> · <kind>" names
+	rexBranches = map[string]string{} // session name -> real branch name
+)
+
+// rexLoad reads the tab prefix and the known workers' branch names, so tab
+// labels can use the real branch instead of the slugged session name.
+func rexLoad() {
+	root, err := findRepoRoot()
+	if err != nil {
+		return
+	}
+	rexMu.Lock()
+	defer rexMu.Unlock()
+	if cfg, err := loadConfig(root); err == nil {
+		rexPrefix = cfg.TabPrefix
+	}
+	if s, err := loadState(root); err == nil {
+		for _, w := range s.Workers {
+			rexBranches[w.Session] = w.Branch
+		}
+	}
+}
+
+func rexRegister(session, branch string) {
+	rexMu.Lock()
+	rexBranches[session] = branch
+	rexMu.Unlock()
+}
+
 // rexShort strips the "tulip-" prefix tulip puts on session names.
 func rexShort(session string) string { return strings.TrimPrefix(session, "tulip-") }
+
+// rexGroup is the label shared by all of a worker's tabs: "<prefix> - <branch>"
+// when a prefix is configured, otherwise the slugged session name.
+func rexGroup(session string) string {
+	rexMu.RLock()
+	defer rexMu.RUnlock()
+	if rexPrefix == "" {
+		return rexShort(session)
+	}
+	branch := rexBranches[session]
+	if branch == "" {
+		branch = rexShort(session)
+	}
+	return rexPrefix + " - " + branch
+}
 
 // rexLabel names the tab for a (session, window) pair: "<branch> · <kind>",
 // where kind is the first path segment of the tmux-style window name.
 func rexLabel(session, window string) string {
 	kind, _, _ := strings.Cut(window, "/")
-	return rexShort(session) + " · " + kind
+	rexMu.RLock()
+	prefixed := rexPrefix != ""
+	rexMu.RUnlock()
+	// With a prefix the Claude tab is just "<prefix> - <branch>"; other tabs add their kind.
+	if prefixed && kind == "claude" {
+		return rexGroup(session)
+	}
+	return rexGroup(session) + " · " + kind
 }
 
 // rexSplitTarget splits a tmux-style "session[:window]" target.
@@ -114,7 +167,7 @@ func rexSplitTarget(target string) (session, window string) {
 func rexFind(label string) *rexWindow {
 	for _, w := range rexWindows() {
 		w := w
-		if w.Label == label || strings.HasPrefix(w.Label, label+" · ") {
+		if w.Label == label || strings.HasPrefix(w.Label, label+" · graft: ") {
 			return &w
 		}
 	}
@@ -138,7 +191,8 @@ func rexNewTab(label, dir, command string, keepOpen bool) error {
 	return err
 }
 
-func rexNewSession(name, startDir string) error {
+func rexNewSession(name, branch, startDir string) error {
+	rexRegister(name, branch)
 	return rexNewTab(rexLabel(name, "claude"), startDir, "", false)
 }
 
@@ -168,9 +222,9 @@ func rexKillWindow(session, window string) {
 }
 
 func rexKillSession(name string) {
-	prefix := rexShort(name) + " · "
+	group := rexGroup(name)
 	for _, w := range rexWindows() {
-		if strings.HasPrefix(w.Label, prefix) {
+		if w.Label == group || strings.HasPrefix(w.Label, group+" · ") {
 			_, _ = rexCmd("window", "close", w.ID)
 		}
 	}

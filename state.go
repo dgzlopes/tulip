@@ -40,6 +40,8 @@ const defaultGraftCommand = "yarn install && yarn run watch"
 type Config struct {
 	GraftCommand       string `json:"graft_command,omitempty"`
 	GraftDefaultDomain string `json:"graft_default_domain,omitempty"`
+	// TabPrefix names Rex tabs "<prefix> - <branch>" instead of "<branch> · claude".
+	TabPrefix string `json:"tab_prefix,omitempty"`
 }
 
 // GraftCmd returns the configured graft command, falling back to the default.
