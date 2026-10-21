@@ -31,7 +31,7 @@ tulip runs each session in either tmux or Rex.
 
 Force one with `--backend=rex|tmux` or `TULIP_BACKEND=rex|tmux`.
 
-Tab names can take an optional per-repo prefix: `tulip config tab-prefix "Synthetics: App · "` names the Claude tab `Synthetics: App · <branch>` and the others `Synthetics: App · <branch> · shell`. The prefix is used as-is, so include your own separator and trailing space. Run `tulip config tab-prefix` with no text to clear it. Without a prefix, tabs are named `<branch> · claude`, `<branch> · shell`, and so on.
+Tab names can take an optional per-repo prefix: `tulip config tab-prefix "Synthetics: App · "` names the Claude tab `Synthetics: App · <branch>` and the others `Synthetics: App · <branch> · shell`. The prefix is used as-is, so include your own separator and trailing space. Run `tulip config tab-prefix` with no text to clear it. With a prefix set, new tabs are also placed right after the last existing tab with the same prefix, so a repo's tabs stay together. Without a prefix, tabs are named `<branch> · claude`, `<branch> · shell`, and so on.
 
 ## Install
 

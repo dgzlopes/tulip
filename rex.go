@@ -186,9 +186,41 @@ func rexNewTab(label, dir, command string, keepOpen bool) error {
 	if command != "" {
 		args = append(args, "--", "sh", "-c", command)
 	}
-	_, err := rexCmd(args...)
+	out, err := rexCmd(args...)
 	rexInvalidate()
-	return err
+	if err != nil {
+		return err
+	}
+	var created struct {
+		WindowID string `json:"window_id"`
+	}
+	if json.Unmarshal(out, &created) == nil && created.WindowID != "" {
+		rexGroupAfterPeers(created.WindowID)
+	}
+	return nil
+}
+
+// rexGroupAfterPeers moves a new tab right after the last existing tab that
+// shares the configured prefix, so a repo's tabs stay together and in creation
+// order. With no prefix, or no peers, the tab stays where Rex put it.
+func rexGroupAfterPeers(newID string) {
+	rexMu.RLock()
+	prefix := rexPrefix
+	rexMu.RUnlock()
+	if prefix == "" {
+		return
+	}
+	lastPeer := ""
+	for _, w := range rexWindows() {
+		if w.ID != newID && strings.HasPrefix(w.Label, prefix) {
+			lastPeer = w.ID
+		}
+	}
+	if lastPeer == "" {
+		return
+	}
+	_, _ = rexCmd("window", "move", newID, "--after", lastPeer)
+	rexInvalidate()
 }
 
 func rexNewSession(name, branch, startDir string) error {
