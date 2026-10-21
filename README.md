@@ -15,8 +15,17 @@ https://github.com/user-attachments/assets/c750da08-e3db-473f-b013-555b248aa3fd
 
 ## Requirements
 
-- tmux
+- tmux, or a [Rex](https://www.superlogical.com/rex) terminal
 - [Claude Code](https://claude.ai/code)
+
+## Backends
+
+tulip runs each session in either tmux or Rex.
+
+- **tmux** (default): sessions live in a dedicated tmux server; actions attach to it.
+- **Rex**: used automatically when tulip runs inside a Rex terminal (`REX_SESSION` is set). The TUI stays open in its own tab, and each action opens or focuses a tab in the same Rex session: `<branch> · claude`, `<branch> · shell`, `<branch> · watch`. A running graft shows in the Claude tab's label (`graft: active` or `graft: failed`).
+
+Force one with `--backend=rex|tmux` or `TULIP_BACKEND=rex|tmux`.
 
 ## Install
 

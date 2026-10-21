@@ -31,21 +31,38 @@ Usage:
   tulip reset                        wipe all projects
 
 Options:
-  -h, --help    show this help
+  --backend=rex|tmux   where sessions run (default: rex inside a Rex terminal, else tmux)
+  -h, --help           show this help
 `
 
 func main() {
+	args := os.Args[1:]
+
+	// --backend=rex|tmux may appear anywhere; it is not part of any command.
+	backendFlag := ""
+	rest := args[:0:0]
+	for _, a := range args {
+		if v, ok := strings.CutPrefix(a, "--backend="); ok {
+			backendFlag = v
+			continue
+		}
+		rest = append(rest, a)
+	}
+	args = rest
+	if err := initBackend(backendFlag); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Initialise the dedicated tmux socket as early as possible so all tmux
 	// helpers use the isolated server for this repo. Best-effort — if the repo
 	// root can't be found (e.g. -h/--version flags) we just leave it empty.
-	if root, err := findRepoRoot(); err == nil {
+	if root, err := findRepoRoot(); err == nil && !useRex {
 		initTmuxSocket(filepath.Join(root, ".tulip"))
 		// Re-apply global tmux settings on every tulip invocation so that
 		// existing sessions pick up binding fixes from newer versions.
 		tmuxApplyGlobalSettings()
 	}
-
-	args := os.Args[1:]
 
 	if len(args) == 0 {
 		if err := cmdTUI(); err != nil {
@@ -399,14 +416,20 @@ func cmdTUI() error {
 			}
 			resumeBranch = branch
 		case 2:
-			return cmdWatch(branch)
+			if err := cmdWatch(branch); err != nil || !useRex {
+				return err
+			}
+			resumeBranch = branch
 		case 3:
 			if err := cmdGraftDebug(branch); err != nil {
 				return err
 			}
 			resumeBranch = branch
 		case 4:
-			return cmdVSCode(branch)
+			if err := cmdVSCode(branch); err != nil || !useRex {
+				return err
+			}
+			resumeBranch = branch
 		case 5:
 			fmt.Print("commit message: ")
 			reader := bufio.NewReader(os.Stdin)
@@ -468,6 +491,9 @@ func requireWorker(branch string) (*State, *Worker, error) {
 // When the user detaches (Ctrl+B D), the subprocess exits and control returns
 // to the caller so the TUI can be shown again.
 func tmuxAttach(target string) error {
+	if useRex {
+		return rexFocus(target)
+	}
 	fmt.Print("\033[H\033[2J\033[3J")
 	// Suppress WheelUpPane during the attach transition: some terminals fire a
 	// spurious scroll event as tmux takes over the terminal, which would enter
