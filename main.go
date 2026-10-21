@@ -28,7 +28,7 @@ Usage:
   tulip vscode <branch>              open the worktree in VS Code
   tulip config graft-command <cmd>   set the command run when grafting (default: yarn install && yarn run watch)
   tulip config graft-domain [domain] set the default Graft domain (opens a picker if domain is omitted)
-  tulip config tab-prefix [text]     name Rex tabs "<text> - <branch>" (no text clears it)
+  tulip config tab-prefix [text]     name Rex tabs "<text><branch>", text used as-is (no text clears it)
   tulip reset                        wipe all projects
 
 Options:
