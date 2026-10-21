@@ -162,7 +162,6 @@ type publishDoneMsg struct {
 type model struct {
 	state              *State
 	polling            bool
-	showMerged         bool
 	height             int
 	config             *Config
 	repoRoot           string
@@ -469,12 +468,8 @@ func (m model) updateNormal(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.actionWorker = w
 			m.mode = modeDelete
 		}
-	case "m":
-		m.showMerged = !m.showMerged
-		m.cursor = 0
-		(&m).clampCursor()
 	case "h":
-		if len(m.state.DeletedWorkers) > 0 {
+		if len(m.historyItems()) > 0 {
 			m.historyCursor = 0
 			m.historyScroll = 0
 			m.mode = modeHistory
@@ -1103,19 +1098,40 @@ func (m model) View() string {
 
 const maxWorkersVisible = 8
 
-// shown returns the indexes into state.Workers that the list displays: every
-// project, or all but those whose PR has merged (nothing is deleted).
+// shown returns the indexes into state.Workers that the main list displays:
+// every project except those whose PR has merged, which live in history.
 func (m model) shown() []int {
 	idx := make([]int, 0, len(m.state.Workers))
 	for i, w := range m.state.Workers {
-		if m.showMerged || w.PRState != "MERGED" {
+		if w.PRState != "MERGED" {
 			idx = append(idx, i)
 		}
 	}
 	return idx
 }
 
-func (m model) hiddenCount() int { return len(m.state.Workers) - len(m.shown()) }
+func (m model) mergedCount() int { return len(m.state.Workers) - len(m.shown()) }
+
+// historyItem is one history row: a merged project (still has its worktree and
+// can be opened) or a deleted one (a record only).
+type historyItem struct {
+	worker Worker
+	live   int // index into state.Workers, or -1 for a deleted entry
+}
+
+// historyItems lists merged projects first, then deleted ones.
+func (m model) historyItems() []historyItem {
+	var items []historyItem
+	for i, w := range m.state.Workers {
+		if w.PRState == "MERGED" {
+			items = append(items, historyItem{worker: w, live: i})
+		}
+	}
+	for _, w := range m.state.DeletedWorkers {
+		items = append(items, historyItem{worker: w, live: -1})
+	}
+	return items
+}
 
 // cursorWorker returns the project under the cursor, or nil if the list is empty.
 func (m *model) cursorWorker() *Worker {
@@ -1180,7 +1196,11 @@ func prBadge(number int, state, url string) string {
 }
 
 func (m model) pageHeader() string {
-	h := sTitle.Render("🌷 tulip") + " " + sDim.Render("— a nicer way to work with Claude Code")
+	tagline := "— a nicer way to work with Claude Code"
+	if useRex {
+		tagline = "— a nicer way to work with Rex and Claude Code"
+	}
+	h := sTitle.Render("🌷 tulip") + " " + sDim.Render(tagline)
 	if m.grafting {
 		h += "  " + m.spinner.View() + sDim.Render(" grafting…")
 	}
@@ -1237,8 +1257,8 @@ func (m model) viewMain() string {
 	total := len(shown)
 	if total == 0 {
 		msg := "  no projects"
-		if n := m.hiddenCount(); n > 0 {
-			msg = fmt.Sprintf("  %d merged project(s) hidden — press m to show", n)
+		if n := m.mergedCount(); n > 0 {
+			msg = fmt.Sprintf("  all %d project(s) are merged — press h for history", n)
 		}
 		lines = append(lines, sGrey.Render(msg))
 	} else {
@@ -1295,13 +1315,12 @@ func (m model) viewMain() string {
 	if total > 0 {
 		footer += "   " + sKey.Render("d") + " " + sDim.Render("delete project")
 	}
-	if n := m.hiddenCount(); n > 0 {
-		footer += "   " + sKey.Render("m") + " " + sDim.Render(fmt.Sprintf("show merged (%d hidden)", n))
-	} else if m.showMerged {
-		footer += "   " + sKey.Render("m") + " " + sDim.Render("hide merged")
-	}
-	if len(m.state.DeletedWorkers) > 0 {
-		footer += "   " + sKey.Render("h") + " " + sDim.Render("history")
+	if n := m.mergedCount(); n+len(m.state.DeletedWorkers) > 0 {
+		hist := "history"
+		if n > 0 {
+			hist = fmt.Sprintf("history (%d merged)", n)
+		}
+		footer += "   " + sKey.Render("h") + " " + sDim.Render(hist)
 	}
 	footer += "   " + sKey.Render("q") + " " + sDim.Render("quit")
 	footer += "   " + sKey.Render("?") + " " + sDim.Render("help")
@@ -1345,7 +1364,7 @@ func (m model) viewHelp() string {
 }
 
 func (m model) updateHistory(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	deleted := m.state.DeletedWorkers
+	items := m.historyItems()
 	switch k.String() {
 	case "esc", "q", "h":
 		m.mode = modeNormal
@@ -1357,20 +1376,30 @@ func (m model) updateHistory(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "down", "j":
-		if m.historyCursor < len(deleted)-1 {
+		if m.historyCursor < len(items)-1 {
 			m.historyCursor++
-			if m.historyCursor >= m.historyScroll+maxWorkersVisible {
-				m.historyScroll = m.historyCursor - maxWorkersVisible + 1
+			if m.historyCursor >= m.historyScroll+m.visibleWorkers() {
+				m.historyScroll = m.historyCursor - m.visibleWorkers() + 1
 			}
 		}
+	case "enter":
+		// Merged projects still have a worktree, so they open like any other.
+		if m.historyCursor < len(items) && items[m.historyCursor].live >= 0 {
+			m.pickedWorker = &m.state.Workers[items[m.historyCursor].live]
+			m.pickCursor = 0
+			m.pickedAction = -1
+			m.mode = modePick
+		}
 	case "x":
-		if m.historyCursor < len(deleted) {
+		// Only deleted entries are records that can be removed.
+		if m.historyCursor < len(items) && items[m.historyCursor].live < 0 {
 			s := m.state
-			s.DeletedWorkers = append(s.DeletedWorkers[:m.historyCursor], s.DeletedWorkers[m.historyCursor+1:]...)
-			if m.historyCursor >= len(s.DeletedWorkers) && m.historyCursor > 0 {
+			di := m.historyCursor - (len(items) - len(s.DeletedWorkers))
+			s.DeletedWorkers = append(s.DeletedWorkers[:di], s.DeletedWorkers[di+1:]...)
+			if m.historyCursor >= len(m.historyItems()) && m.historyCursor > 0 {
 				m.historyCursor--
 			}
-			if len(s.DeletedWorkers) == 0 {
+			if len(m.historyItems()) == 0 {
 				m.mode = modeNormal
 			}
 			return m, func() tea.Msg {
@@ -1385,7 +1414,7 @@ func (m model) updateHistory(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) viewHistory() string {
-	deleted := m.state.DeletedWorkers
+	items := m.historyItems()
 	var lines []string
 	lines = append(lines, m.pageHeader())
 	lines = append(lines, "")
@@ -1393,27 +1422,33 @@ func (m model) viewHistory() string {
 	lines = append(lines, "")
 
 	colB := 0
-	for _, w := range deleted {
-		if len(w.Branch) > colB {
-			colB = len(w.Branch)
+	for _, it := range items {
+		if len(it.worker.Branch) > colB {
+			colB = len(it.worker.Branch)
 		}
 	}
 	if colB > 26 {
 		colB = 26
 	}
 
-	end := m.historyScroll + maxWorkersVisible
-	if end > len(deleted) {
-		end = len(deleted)
+	vis := m.visibleWorkers()
+	end := m.historyScroll + vis
+	if end > len(items) {
+		end = len(items)
 	}
 	for i := m.historyScroll; i < end; i++ {
-		w := deleted[i]
+		it := items[i]
+		w := it.worker
 		branch := w.Branch
 		if len(branch) > colB {
 			branch = branch[:colB-1] + "…"
 		}
 		branch = fmt.Sprintf("%-*s", colB, branch)
-		row := sDim.Render(w.DeletedAt) + "  " + branch
+		when := sDim.Render(fmt.Sprintf("%-12s", w.DeletedAt))
+		if it.live >= 0 {
+			when = sGreen.Render(fmt.Sprintf("%-12s", "merged"))
+		}
+		row := when + "  " + branch
 		if w.PRNumber > 0 {
 			row += "  " + prBadge(w.PRNumber, w.PRState, w.PRURL)
 		} else {
@@ -1425,12 +1460,18 @@ func (m model) viewHistory() string {
 			lines = append(lines, "    "+row)
 		}
 	}
-	if len(deleted) > maxWorkersVisible {
-		lines = append(lines, sGrey.Render(fmt.Sprintf("  … %d more", len(deleted)-maxWorkersVisible)))
+	if len(items) > vis {
+		lines = append(lines, sGrey.Render(fmt.Sprintf("  … %d more", len(items)-vis)))
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, "  "+sKey.Render("x")+" "+sDim.Render("remove entry")+"   "+sKey.Render("esc")+" "+sDim.Render("to go back"))
+	footer := "  "
+	if m.historyCursor < len(items) && items[m.historyCursor].live >= 0 {
+		footer += sKey.Render("↵") + " " + sDim.Render("open") + "   "
+	} else if m.historyCursor < len(items) {
+		footer += sKey.Render("x") + " " + sDim.Render("remove entry") + "   "
+	}
+	lines = append(lines, footer+sKey.Render("esc")+" "+sDim.Render("to go back"))
 	return strings.Join(lines, "\n")
 }
 
