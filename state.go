@@ -42,8 +42,6 @@ type Config struct {
 	GraftDefaultDomain string `json:"graft_default_domain,omitempty"`
 	// TabPrefix names Rex tabs "<prefix><branch>" (used verbatim) instead of "<branch> · claude".
 	TabPrefix string `json:"tab_prefix,omitempty"`
-	// TUITab is the Rex tab name for the tulip TUI itself; "off" leaves the tab alone.
-	TUITab string `json:"tui_tab,omitempty"`
 }
 
 // GraftCmd returns the configured graft command, falling back to the default.
