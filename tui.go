@@ -635,7 +635,9 @@ func restoreAllWorkersCmd(state *State) tea.Cmd {
 				}
 				continue
 			}
-			if tmuxHasSession(w.Session) {
+			// In Rex mode every session is a visible tab, so don't open one
+			// per project at startup; requireWorker starts it on first use.
+			if useRex || tmuxHasSession(w.Session) {
 				continue
 			}
 			session := makeSessionName(w.Branch)
