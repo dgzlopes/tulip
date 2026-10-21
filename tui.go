@@ -323,6 +323,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.notif = "✗  " + msg.err.Error()
 			m.notifIsErr = true
+		} else if urls, err := graftPreviewURLs(m.config); err == nil && len(urls) > 0 {
+			m.notif = "🐝  grafting " + msg.branch + " — preview: " + urls[0]
 		}
 		m.notifTick = 6
 
@@ -642,9 +644,9 @@ func restoreAllWorkersCmd(state *State) tea.Cmd {
 				changed = true
 				continue
 			}
-			claudeCmd := fmt.Sprintf("claude --name %q", w.Branch)
+			claudeCmd := fmt.Sprintf("claude --chrome --name %q", w.Branch)
 			if w.SessionStarted {
-				claudeCmd = fmt.Sprintf("claude --resume %q", w.Branch)
+				claudeCmd = fmt.Sprintf("claude --chrome --resume %q", w.Branch)
 			}
 			_ = tmuxSendKeys(session, claudeCmd)
 			w.SessionStarted = true
@@ -986,9 +988,9 @@ func startSession(state *State, branch, worktreePath string) tea.Msg {
 		w = addWorker(state, branch, worktreePath)
 	}
 
-	claudeCmd := fmt.Sprintf("claude --name %q", branch)
+	claudeCmd := fmt.Sprintf("claude --chrome --name %q", branch)
 	if w.SessionStarted {
-		claudeCmd = fmt.Sprintf("claude --resume %q", branch)
+		claudeCmd = fmt.Sprintf("claude --chrome --resume %q", branch)
 	}
 	if err := tmuxSendKeys(session, claudeCmd); err != nil {
 		return errMsg{err}

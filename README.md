@@ -65,12 +65,16 @@ tulip claude <id|branch>         # attach to the Claude session
 tulip shell <id|branch>          # open a shell in the worktree
 tulip graft <id|branch>          # start yarn watch for live preview (switches active graft)
 tulip graft-debug <id|branch>    # attach to the graft watch output
-tulip vscode <id|branch>         # open the worktree in VS Code
-tulip publish <id|branch> <msg>  # stage all, commit (signed), and push
-tulip config graft-command <cmd> # set the command run when grafting (default: yarn install && yarn run watch)
+tulip graft-urls                    # list the Grafana Cloud pages Graft is configured to preview on
+tulip vscode <id|branch>            # open the worktree in VS Code
+tulip publish <id|branch> <msg>     # stage all, commit (signed), and push
+tulip config graft-command <cmd>    # set the command run when grafting (default: yarn install && yarn run watch)
+tulip config graft-domain [domain]  # set the default Graft domain (opens a picker if domain is omitted)
 ```
 
 The `↵` action menu also provides: **difit** (visual diff, requires [difit](https://github.com/yoshiko-pg/difit)) and **open-pr** (open PR in browser).
+
+Every `claude` session tulip starts is launched with `--chrome`, so it can use Claude in Chrome to look at whatever Grafana Cloud page you have open — including a live Graft preview of that session's own branch. `tulip graft-urls` reads Graft's own global config (`~/.config/graft`) and shows every domain it's currently set up to intercept, plus its interception/plugin state; `tulip graft <id|branch>` prints the same list right after switching the preview. If more than one domain is enabled, `tulip config graft-domain` marks (and lets you change) which one is treated as *the* preview URL for this repo — shown first in `graft-urls` and used for the notification when grafting finishes.
 
 ## License
 

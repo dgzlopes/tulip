@@ -38,7 +38,8 @@ const defaultGraftCommand = "yarn install && yarn run watch"
 
 // Config holds per-repo tulip configuration, separate from ephemeral state.
 type Config struct {
-	GraftCommand string `json:"graft_command,omitempty"`
+	GraftCommand       string `json:"graft_command,omitempty"`
+	GraftDefaultDomain string `json:"graft_default_domain,omitempty"`
 }
 
 // GraftCmd returns the configured graft command, falling back to the default.
