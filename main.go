@@ -29,6 +29,7 @@ Usage:
   tulip config graft-command <cmd>   set the command run when grafting (default: yarn install && yarn run watch)
   tulip config graft-domain [domain] set the default Graft domain (opens a picker if domain is omitted)
   tulip config tab-prefix [text]     name Rex tabs "<text><branch>", text used as-is (no text clears it)
+  tulip config tui-tab <name|off>    name of the Rex tab tulip runs in (default: "🌷 tulip")
   tulip reset                        wipe all projects
 
 Options:
@@ -170,7 +171,7 @@ func main() {
 
 	case "config":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: tulip config <graft-command|graft-domain|tab-prefix> [value]")
+			fmt.Fprintln(os.Stderr, "usage: tulip config <graft-command|graft-domain|tab-prefix|tui-tab> [value]")
 			os.Exit(1)
 		}
 		switch args[1] {
@@ -180,6 +181,15 @@ func main() {
 				os.Exit(1)
 			}
 			if err := cmdConfigSet("graft-command", strings.Join(args[2:], " ")); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+		case "tui-tab":
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "usage: tulip config tui-tab <name|off>   (default: \""+defaultTUITab+"\")")
+				os.Exit(1)
+			}
+			if err := cmdConfigSet("tui-tab", strings.Join(args[2:], " ")); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
@@ -202,7 +212,7 @@ func main() {
 				os.Exit(1)
 			}
 		default:
-			fmt.Fprintln(os.Stderr, "usage: tulip config <graft-command|graft-domain|tab-prefix> [value]")
+			fmt.Fprintln(os.Stderr, "usage: tulip config <graft-command|graft-domain|tab-prefix|tui-tab> [value]")
 			os.Exit(1)
 		}
 
@@ -400,6 +410,9 @@ func cmdTUI() error {
 		return err
 	}
 	gitEnsureExclude(repoRoot)
+	if cfg, err := loadConfig(repoRoot); err == nil {
+		rexNameTUITab(cfg)
+	}
 
 	resumeBranch := ""
 	for {
@@ -773,6 +786,12 @@ func cmdConfigSet(key, value string) error {
 			return err
 		}
 		fmt.Printf("graft-command set to: %s\n", value)
+	case "tui-tab":
+		cfg.TUITab = value
+		if err := saveConfig(repoRoot, cfg); err != nil {
+			return err
+		}
+		fmt.Printf("tui-tab set to: %s\n", value)
 	case "tab-prefix":
 		cfg.TabPrefix = value
 		if err := saveConfig(repoRoot, cfg); err != nil {

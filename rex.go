@@ -304,6 +304,38 @@ func rexSetGraftStatus(session, status string) {
 	}
 }
 
+const defaultTUITab = "🌷 tulip"
+
+// rexNameTUITab labels the Rex tab tulip's own TUI runs in, so it stands out
+// (and carries an icon) among the worker tabs. No-op outside Rex mode.
+func rexNameTUITab(cfg *Config) {
+	block := os.Getenv("REX_BLOCK")
+	if !useRex || block == "" {
+		return
+	}
+	label := cfg.TUITab
+	if label == "off" {
+		return
+	}
+	if label == "" {
+		label = defaultTUITab
+	}
+	out, err := rexCmd("block", "inspect", block, "--json")
+	if err != nil {
+		return
+	}
+	var info struct {
+		Block struct {
+			WindowID string `json:"window_id"`
+		} `json:"block"`
+	}
+	if json.Unmarshal(out, &info) != nil || info.Block.WindowID == "" {
+		return
+	}
+	_, _ = rexCmd("window", "rename", info.Block.WindowID, label)
+	rexInvalidate()
+}
+
 // rexFocus brings a tab to the front; it replaces tmux attach.
 func rexFocus(target string) error {
 	session, window := rexSplitTarget(target)
