@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,27 +23,51 @@ Usage:
   tulip shell <branch>               open an empty terminal in the worktree
   tulip graft <branch>               switch active Graft preview to this branch
   tulip graft-debug <branch>         attach to the Graft watch output
+  tulip graft-urls                   list Grafana Cloud pages Graft is configured to preview on
   tulip publish <branch>             stage all, commit (signed), and push
   tulip vscode <branch>              open the worktree in VS Code
   tulip config graft-command <cmd>   set the command run when grafting (default: yarn install && yarn run watch)
+  tulip config graft-domain [domain] set the default Graft domain (opens a picker if domain is omitted)
+  tulip config tab-prefix [text]     name Rex tabs "<text><branch>", text used as-is (no text clears it)
   tulip reset                        wipe all projects
 
 Options:
-  -h, --help    show this help
+  --backend=rex|tmux   where sessions run (default: rex inside a Rex terminal, else tmux)
+  -h, --help           show this help
 `
 
 func main() {
+	args := os.Args[1:]
+
+	// --backend=rex|tmux may appear anywhere; it is not part of any command.
+	backendFlag := ""
+	rest := args[:0:0]
+	for _, a := range args {
+		if v, ok := strings.CutPrefix(a, "--backend="); ok {
+			backendFlag = v
+			continue
+		}
+		rest = append(rest, a)
+	}
+	args = rest
+	if err := initBackend(backendFlag); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if useRex {
+		rexLoad()
+	}
+
 	// Initialise the dedicated tmux socket as early as possible so all tmux
 	// helpers use the isolated server for this repo. Best-effort — if the repo
 	// root can't be found (e.g. -h/--version flags) we just leave it empty.
-	if root, err := findRepoRoot(); err == nil {
+	if root, err := findRepoRoot(); err == nil && !useRex {
 		initTmuxSocket(filepath.Join(root, ".tulip"))
 		// Re-apply global tmux settings on every tulip invocation so that
 		// existing sessions pick up binding fixes from newer versions.
 		tmuxApplyGlobalSettings()
 	}
-
-	args := os.Args[1:]
 
 	if len(args) == 0 {
 		if err := cmdTUI(); err != nil {
@@ -111,6 +136,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "graft-urls":
+		if err := cmdGraftURLs(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "publish":
 		if len(args) < 3 {
 			fmt.Fprintln(os.Stderr, "usage: tulip publish <branch> <message>")
@@ -138,12 +169,40 @@ func main() {
 		}
 
 	case "config":
-		if len(args) < 3 || args[1] != "graft-command" {
-			fmt.Fprintln(os.Stderr, "usage: tulip config graft-command <command>")
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: tulip config <graft-command|graft-domain|tab-prefix> [value]")
 			os.Exit(1)
 		}
-		if err := cmdConfigSet("graft-command", strings.Join(args[2:], " ")); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		switch args[1] {
+		case "graft-command":
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "usage: tulip config graft-command <command>")
+				os.Exit(1)
+			}
+			if err := cmdConfigSet("graft-command", strings.Join(args[2:], " ")); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+		case "tab-prefix":
+			value := ""
+			if len(args) >= 3 {
+				value = strings.Join(args[2:], " ")
+			}
+			if err := cmdConfigSet("tab-prefix", value); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+		case "graft-domain":
+			domain := ""
+			if len(args) >= 3 {
+				domain = args[2]
+			}
+			if err := cmdGraftDomain(domain); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+		default:
+			fmt.Fprintln(os.Stderr, "usage: tulip config <graft-command|graft-domain|tab-prefix> [value]")
 			os.Exit(1)
 		}
 
@@ -271,6 +330,67 @@ func runPicker(branch string) (int, error) {
 	return final.(pickerModel).chosen, nil
 }
 
+// domainPickerModel is a one-keypress picker for choosing the default Graft
+// domain from the set Graft currently has enabled.
+type domainPickerModel struct {
+	domains []string
+	current string
+	cursor  int
+	chosen  int
+}
+
+func (p domainPickerModel) Init() tea.Cmd { return nil }
+
+func (p domainPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if k, ok := msg.(tea.KeyMsg); ok {
+		switch k.String() {
+		case "up", "k":
+			if p.cursor > 0 {
+				p.cursor--
+			}
+		case "down", "j":
+			if p.cursor < len(p.domains)-1 {
+				p.cursor++
+			}
+		case "enter":
+			p.chosen = p.cursor
+			return p, tea.Quit
+		case "q", "esc", "ctrl+c":
+			p.chosen = -1
+			return p, tea.Quit
+		}
+	}
+	return p, nil
+}
+
+func (p domainPickerModel) View() string {
+	var b strings.Builder
+	b.WriteString("\n  " + sBold.Render("default graft domain") + "\n\n")
+	for i, d := range p.domains {
+		marker := " "
+		if d == p.current {
+			marker = sCyan.Render("●")
+		}
+		if i == p.cursor {
+			b.WriteString("  " + sCyan.Render("▶") + " " + marker + " " + sBold.Render(d) + "\n")
+		} else {
+			b.WriteString("    " + marker + " " + sGrey.Render(d) + "\n")
+		}
+	}
+	b.WriteString("\n  " + sDim.Render("↑↓ navigate   enter select   esc cancel"))
+	return b.String()
+}
+
+func runDomainPicker(domains []string, current string) (int, error) {
+	m := domainPickerModel{domains: domains, current: current, chosen: -1}
+	prog := tea.NewProgram(m)
+	final, err := prog.Run()
+	if err != nil {
+		return -1, err
+	}
+	return final.(domainPickerModel).chosen, nil
+}
+
 // cmdTUI launches the Bubble Tea TUI and executes any action chosen inside it.
 // After terminal-taking actions (claude, shell, graft-debug) return, the TUI
 // is shown again so the user can pick another action without restarting tulip.
@@ -310,14 +430,20 @@ func cmdTUI() error {
 			}
 			resumeBranch = branch
 		case 2:
-			return cmdWatch(branch)
+			if err := cmdWatch(branch); err != nil || !useRex {
+				return err
+			}
+			resumeBranch = branch
 		case 3:
 			if err := cmdGraftDebug(branch); err != nil {
 				return err
 			}
 			resumeBranch = branch
 		case 4:
-			return cmdVSCode(branch)
+			if err := cmdVSCode(branch); err != nil || !useRex {
+				return err
+			}
+			resumeBranch = branch
 		case 5:
 			fmt.Print("commit message: ")
 			reader := bufio.NewReader(os.Stdin)
@@ -358,9 +484,9 @@ func requireWorker(branch string) (*State, *Worker, error) {
 		if err := tmuxNewSession(w.Session, w.Branch, w.Worktree); err != nil {
 			return nil, nil, fmt.Errorf("restart session: %w", err)
 		}
-		claudeCmd := fmt.Sprintf("claude --name %q", w.Branch)
+		claudeCmd := fmt.Sprintf("claude --chrome --name %q", w.Branch)
 		if w.SessionStarted {
-			claudeCmd = fmt.Sprintf("claude --resume %q", w.Branch)
+			claudeCmd = fmt.Sprintf("claude --chrome --resume %q", w.Branch)
 		}
 		if err := tmuxSendKeys(w.Session, claudeCmd); err != nil {
 			return nil, nil, fmt.Errorf("send keys: %w", err)
@@ -379,6 +505,9 @@ func requireWorker(branch string) (*State, *Worker, error) {
 // When the user detaches (Ctrl+B D), the subprocess exits and control returns
 // to the caller so the TUI can be shown again.
 func tmuxAttach(target string) error {
+	if useRex {
+		return rexFocus(target)
+	}
 	fmt.Print("\033[H\033[2J\033[3J")
 	// Suppress WheelUpPane during the attach transition: some terminals fire a
 	// spurious scroll event as tmux takes over the terminal, which would enter
@@ -474,6 +603,105 @@ func cmdWatch(branch string) error {
 		return fmt.Errorf("could not send graft command: %w", err)
 	}
 	fmt.Printf("grafting %s\n", branch)
+	if urls, err := graftPreviewURLs(cfg); err == nil && len(urls) > 0 {
+		fmt.Println("preview at:")
+		for _, u := range urls {
+			fmt.Println("  " + u)
+		}
+	}
+	return nil
+}
+
+// cmdGraftURLs prints Graft's globally configured domains (and, when
+// available, its interception/plugin state), marking the current default.
+func cmdGraftURLs() error {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfig(repoRoot)
+	if err != nil {
+		return err
+	}
+	summary, err := readGraftSummary()
+	if err != nil {
+		return fmt.Errorf("could not read Graft config: %w", err)
+	}
+	if len(summary.Domains) == 0 {
+		fmt.Println("no Graft domains configured — see ~/.config/graft/config.json")
+		return nil
+	}
+	if summary.HasStateInfo {
+		state := "off"
+		if summary.Interception {
+			state = "on"
+		}
+		fmt.Printf("interception: %s\n", state)
+		if len(summary.EnabledPlugins) > 0 {
+			fmt.Printf("enabled plugins: %s\n", strings.Join(summary.EnabledPlugins, ", "))
+		}
+	}
+	fmt.Println("domains:")
+	def := cfg.GraftDefaultDomain
+	if def == "" {
+		def = summary.Domains[0]
+	}
+	for _, d := range summary.Domains {
+		line := "  https://" + d
+		if d == def {
+			line += "  (default)"
+		}
+		fmt.Println(line)
+	}
+	return nil
+}
+
+// cmdGraftDomain sets the default Graft domain for this repo, either
+// directly (when domain is non-empty) or via an interactive picker over
+// Graft's currently enabled domains.
+func cmdGraftDomain(domain string) error {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfig(repoRoot)
+	if err != nil {
+		return err
+	}
+
+	if domain != "" {
+		cfg.GraftDefaultDomain = domain
+		if err := saveConfig(repoRoot, cfg); err != nil {
+			return err
+		}
+		fmt.Printf("default graft domain set to: %s\n", domain)
+		if summary, err := readGraftSummary(); err == nil && !slices.Contains(summary.Domains, domain) {
+			fmt.Println("note: this domain isn't currently enabled in Graft — see `tulip graft-urls`")
+		}
+		return nil
+	}
+
+	summary, err := readGraftSummary()
+	if err != nil {
+		return fmt.Errorf("could not read Graft config: %w", err)
+	}
+	if len(summary.Domains) == 0 {
+		fmt.Println("no Graft domains configured — see ~/.config/graft/config.json")
+		return nil
+	}
+	idx, err := runDomainPicker(summary.Domains, cfg.GraftDefaultDomain)
+	if err != nil {
+		return err
+	}
+	if idx < 0 {
+		fmt.Println("cancelled.")
+		return nil
+	}
+	cfg.GraftDefaultDomain = summary.Domains[idx]
+	if err := saveConfig(repoRoot, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("default graft domain set to: %s\n", cfg.GraftDefaultDomain)
 	return nil
 }
 
@@ -545,6 +773,16 @@ func cmdConfigSet(key, value string) error {
 			return err
 		}
 		fmt.Printf("graft-command set to: %s\n", value)
+	case "tab-prefix":
+		cfg.TabPrefix = value
+		if err := saveConfig(repoRoot, cfg); err != nil {
+			return err
+		}
+		if value == "" {
+			fmt.Println("tab-prefix cleared")
+		} else {
+			fmt.Printf("tab-prefix set to: %s\n", value)
+		}
 	default:
 		return fmt.Errorf("unknown config key %q", key)
 	}

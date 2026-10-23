@@ -15,8 +15,23 @@ https://github.com/user-attachments/assets/c750da08-e3db-473f-b013-555b248aa3fd
 
 ## Requirements
 
-- tmux
+- tmux, or a [Rex](https://www.superlogical.com/rex) terminal
 - [Claude Code](https://claude.ai/code)
+
+## The project list
+
+The list grows to fill the terminal. Projects whose PR has merged are hidden by default (nothing is deleted); press `m` to show or hide them. Git status and graft state refresh in the background, so large repos with many projects stay responsive.
+
+## Backends
+
+tulip runs each session in either tmux or Rex.
+
+- **tmux** (default): sessions live in a dedicated tmux server; actions attach to it.
+- **Rex**: used automatically when tulip runs inside a Rex terminal (`REX_SESSION` is set). The TUI stays open in its own tab, and each action opens or focuses a tab in the same Rex session: `<branch> · claude`, `<branch> · shell`, `<branch> · watch`. A running graft shows in the Claude tab's label (`graft: active` or `graft: failed`).
+
+Force one with `--backend=rex|tmux` or `TULIP_BACKEND=rex|tmux`.
+
+Tabs are named after the branch: the Claude tab is `<branch>`, and the others add a suffix (`<branch> · shell`, `<branch> · watch`). An optional per-repo prefix goes in front of the branch: `tulip config tab-prefix "Synthetics: App / "` gives `Synthetics: App / <branch>`. The prefix is used as-is, so include your own separator, and `tulip config tab-prefix` with no text clears it. With a prefix set, new tabs are placed right after the last existing tab with the same prefix.
 
 ## Install
 
@@ -65,11 +80,16 @@ tulip claude <id|branch>         # attach to the Claude session
 tulip shell <id|branch>          # open a shell in the worktree
 tulip graft <id|branch>          # start yarn watch for live preview (switches active graft)
 tulip graft-debug <id|branch>    # attach to the graft watch output
-tulip vscode <id|branch>         # open the worktree in VS Code
-tulip publish <id|branch> <msg>  # stage all, commit (signed), and push
+tulip graft-urls                    # list the Grafana Cloud pages Graft is configured to preview on
+tulip vscode <id|branch>            # open the worktree in VS Code
+tulip publish <id|branch> <msg>     # stage all, commit (signed), and push
+tulip config graft-command <cmd>    # set the command run when grafting (default: yarn install && yarn run watch)
+tulip config graft-domain [domain]  # set the default Graft domain (opens a picker if domain is omitted)
 ```
 
 The `↵` action menu also provides: **difit** (visual diff, requires [difit](https://github.com/yoshiko-pg/difit)) and **open-pr** (open PR in browser).
+
+Every `claude` session tulip starts is launched with `--chrome`, so it can use Claude in Chrome to look at whatever Grafana Cloud page you have open — including a live Graft preview of that session's own branch. `tulip graft-urls` reads Graft's own global config (`~/.config/graft`) and shows every domain it's currently set up to intercept, plus its interception/plugin state; `tulip graft <id|branch>` prints the same list right after switching the preview. If more than one domain is enabled, `tulip config graft-domain` marks (and lets you change) which one is treated as *the* preview URL for this repo — shown first in `graft-urls` and used for the notification when grafting finishes.
 
 ## License
 
